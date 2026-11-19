@@ -277,3 +277,54 @@ def test_update_snapshot_lands_in_pack_snapshots(make, home, monkeypatch, tmp_pa
     entry = PackEntry("net", ".NET", "", "0.2", "1.21.1", "neoforge", "21.1.267", "https://x/net.mrpack", "")
     page._install_job(entry, lambda *a: None)
     assert seen["snaps"] == ctx.lay.snapshots / "net"
+
+
+def test_create_pack_flow(make, monkeypatch):
+    from netlauncher import instances
+    monkeypatch.setattr(instances, "minecraft_releases", lambda: ["26.3", "1.21.4", "1.21.1"])
+    monkeypatch.setattr(instances, "loader_versions",
+                        lambda loader, mc: {"fabric": ["0.16.9", "0.16.8"], "neoforge": ["21.4.10"]}.get(loader, []))
+    w, page, ctx = make()
+    called = {}
+    monkeypatch.setattr(ctx.installer, "ensure",
+                        lambda mc, loader, lv, progress, force=False: called.update(mc=mc, loader=loader, lv=lv))
+    page.panel.new_btn.click()
+    assert page.mode() == "create"
+    c = page.creator
+    pump(until=lambda: c.version.count() == 3)
+    assert [c.version.itemText(i) for i in range(3)] == ["26.3", "1.21.4", "1.21.1"]
+    c.name.setText("Тест Fabric")
+    c.version.setCurrentIndex(1)
+    c.pick_loader("fabric")
+    pump(until=lambda: c.loader_version.count() == 2)
+    assert c.loader_version.currentText() == "0.16.9"
+    c.create_btn.click()
+    pump(until=lambda: page.mode() == "pack" and page.panel.title.text() == "Тест Fabric")
+    assert called == {"mc": "1.21.4", "loader": "fabric", "lv": "0.16.9"}
+    assert ctx.settings.selected_pack == "test-fabric"
+    assert page.panel.meta.text() == "Minecraft 1.21.4 с Fabric, 0 модов"
+
+
+def test_create_vanilla_hides_loader_version(make, monkeypatch):
+    from netlauncher import instances
+    monkeypatch.setattr(instances, "minecraft_releases", lambda: ["1.21.1"])
+    monkeypatch.setattr(instances, "loader_versions", lambda loader, mc: [])
+    w, page, ctx = make()
+    page.panel.new_btn.click()
+    c = page.creator
+    c.pick_loader("vanilla")
+    assert not c.loader_line.isVisibleTo(c)
+    c.pick_loader("forge")
+    pump(until=lambda: c.hint.text().startswith("Для этой"))
+    assert c.hint.text() == "Для этой версии Minecraft нет Forge. Выбери другую версию или загрузчик."
+    assert not c.create_btn.isEnabled()
+
+
+def test_empty_state_has_create(make, monkeypatch):
+    monkeypatch.setattr("netlauncher.ui.pages.home.find_instances", lambda: [])
+    w, page, ctx = make(pack=False)
+    assert page.mode() == "empty" and page.empty.create_btn.text() == "Создать свою сборку"
+    from netlauncher import instances
+    monkeypatch.setattr(instances, "minecraft_releases", lambda: ["1.21.1"])
+    page.empty.create_btn.click()
+    assert page.mode() == "create"

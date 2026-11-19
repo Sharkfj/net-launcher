@@ -228,13 +228,19 @@ class WelcomePanel(QWidget):
 class EmptyPanel(QWidget):
     install_entry = Signal(object)
     import_from = Signal(object)
+    create = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = vbox(self, (8, 0, 8, 0), 10)
         lay.addWidget(label("Сборок пока нет", 30, 650, display=True))
-        lay.addWidget(label("Поставь сборку из списка или перенеси свою из PineconeMC.", 11, role="muted"))
-        lay.addSpacing(14)
+        lay.addWidget(label("Поставь сборку из списка, перенеси свою из PineconeMC или создай новую.", 11,
+                            role="muted"))
+        lay.addSpacing(6)
+        self.create_btn = GhostButton("Создать свою сборку")
+        self.create_btn.clicked.connect(self.create.emit)
+        lay.addWidget(self.create_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addSpacing(8)
         self.list = vbox(None, (0, 0, 0, 0), 10)
         lay.addLayout(self.list)
         self.note = label("", 10, role="faint", wrap=True)
@@ -379,6 +385,127 @@ class ManualPanel(QWidget):
                 self.accept_file(Path(url.toLocalFile()))
 
 
+# ---------------------------------------------------------------- create your own pack
+class CreatePanel(QWidget):
+    create = Signal(str, str, str, str)
+    cancel = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QComboBox
+        from netlauncher import instances
+        lay = vbox(self, (8, 0, 8, 0), 12)
+        lay.addStretch(1)
+        lay.addWidget(label("Новая сборка", 26, 650, display=True))
+        lay.addWidget(label("Выбери версию Minecraft и загрузчик модов. Моды добавишь потом в разделе «Моды».",
+                            11, role="muted", wrap=True))
+        lay.addSpacing(8)
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("Название")
+        self.name.setMaximumWidth(420)
+        lay.addWidget(self.name)
+        self.version = QComboBox()
+        self.version.setMinimumWidth(200)
+        row = hbox(None, (0, 0, 0, 0), 10)
+        row.addWidget(label("Версия Minecraft", 10.5, 520))
+        row.addWidget(self.version)
+        row.addStretch(1)
+        lay.addLayout(row)
+        chips = hbox(None, (0, 0, 0, 0), 8)
+        self.loader = "neoforge"
+        self.loader_chips = {}
+        for key, text in instances.LOADERS:
+            c = Chip(text, key == self.loader)
+            c.clicked.connect(lambda key=key: self.pick_loader(key))
+            chips.addWidget(c)
+            self.loader_chips[key] = c
+        chips.addStretch(1)
+        lay.addLayout(chips)
+        self.loader_version = QComboBox()
+        self.loader_version.setMinimumWidth(200)
+        self.loader_line = QWidget()
+        lr = hbox(self.loader_line, (0, 0, 0, 0), 10)
+        lr.addWidget(label("Версия загрузчика", 10.5, 520))
+        lr.addWidget(self.loader_version)
+        lr.addStretch(1)
+        lay.addWidget(self.loader_line)
+        self.hint = label("", 10, role="muted", wrap=True)
+        lay.addWidget(self.hint)
+        brow = hbox(None, (0, 0, 0, 0), 8)
+        self.create_btn = AccentButton("Создать")
+        back = GhostButton("Отмена")
+        self.create_btn.clicked.connect(self._create)
+        back.clicked.connect(self.cancel.emit)
+        brow.addWidget(self.create_btn)
+        brow.addWidget(back)
+        brow.addStretch(1)
+        lay.addLayout(brow)
+        lay.addStretch(2)
+        self.version.currentIndexChanged.connect(lambda _i: self._load_loader_versions())
+        self._seq = 0
+
+    def open(self) -> None:
+        from netlauncher import instances
+        self.name.clear()
+        self.hint.setText("Загружаю список версий")
+        self.create_btn.setEnabled(False)
+        jobs.run(lambda progress: instances.minecraft_releases(), on_done=self._versions,
+                 on_error=lambda e: self.hint.setText(_error_text(e)))
+
+    def _versions(self, vs: list[str]) -> None:
+        self.version.blockSignals(True)
+        self.version.clear()
+        self.version.addItems(vs)
+        self.version.blockSignals(False)
+        self.hint.setText("")
+        self._load_loader_versions()
+
+    def pick_loader(self, key: str) -> None:
+        self.loader = key
+        for k, c in self.loader_chips.items():
+            c.active = k == key
+            c.update()
+        self.loader_line.setVisible(key != "vanilla")
+        self._load_loader_versions()
+
+    def _load_loader_versions(self) -> None:
+        from netlauncher import instances
+        mc = self.version.currentText()
+        self.loader_version.clear()
+        if self.loader == "vanilla":
+            self.hint.setText("")
+            self.create_btn.setEnabled(bool(mc))
+            return
+        if not mc:
+            return
+        self._seq += 1
+        seq, loader = self._seq, self.loader
+        self.create_btn.setEnabled(False)
+        self.hint.setText("Загружаю версии загрузчика")
+        jobs.run(lambda progress: instances.loader_versions(loader, mc),
+                 on_done=lambda vs: self._loader_versions(seq, loader, vs),
+                 on_error=lambda e: self.hint.setText(_error_text(e)))
+
+    def _loader_versions(self, seq: int, loader: str, vs: list[str]) -> None:
+        if seq != self._seq:
+            return
+        names = dict(LOADER_NAMES)
+        if not vs:
+            self.hint.setText(f"Для этой версии Minecraft нет {names.get(loader, loader)}. "
+                              "Выбери другую версию или загрузчик.")
+            self.create_btn.setEnabled(False)
+            return
+        self.loader_version.addItems(vs)
+        self.hint.setText("")
+        self.create_btn.setEnabled(True)
+
+    def _create(self) -> None:
+        mc = self.version.currentText()
+        name = self.name.text().strip() or f"Minecraft {mc}"
+        lv = "" if self.loader == "vanilla" else self.loader_version.currentText()
+        self.create.emit(name, mc, self.loader, lv)
+
+
 # ---------------------------------------------------------------- pack overview
 class Chip(QWidget):
     clicked = Signal()
@@ -412,7 +539,11 @@ class PackPanel(QWidget):
         root = hbox(self, (8, 0, 0, 0), 24)
         left = vbox(None, (0, 0, 0, 0), 0)
         self.chips_row = hbox(None, (0, 0, 0, 0), 8)
-        left.addLayout(self.chips_row)
+        top_row = hbox(None, (0, 0, 0, 0), 8)
+        top_row.addLayout(self.chips_row, 1)
+        self.new_btn = GhostButton("Новая сборка")
+        top_row.addWidget(self.new_btn)
+        left.addLayout(top_row)
         left.addSpacing(28)
         self.title = label("", 44, 700, display=True)
         self.title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -529,6 +660,7 @@ class PackPanel(QWidget):
             c.deleteLater()
         self._chips = []
         if len(packs) < 2:
+            self.chips_row.addStretch(1) if self.chips_row.count() == 0 else None
             return
         for lp in packs:
             c = Chip(lp.name, lp.id == active)
@@ -562,8 +694,9 @@ class HomePage(QWidget):
         self.panel = PackPanel()
         self.busy = ProgressPanel()
         self.manual = ManualPanel()
+        self.creator = CreatePanel()
         self._modes = {"welcome": self.welcome, "login": self.login, "empty": self.empty, "pack": self.panel, "install": self.busy,
-                       "manual": self.manual}
+                       "manual": self.manual, "create": self.creator}
         for w in self._modes.values():
             self.stack.addWidget(w)
 
@@ -572,7 +705,11 @@ class HomePage(QWidget):
         self.welcome.done.connect(self._welcome_done)
         self.empty.install_entry.connect(self.install_entry)
         self.empty.import_from.connect(self.import_instance)
+        self.empty.create.connect(self.open_creator)
         self.manual.finished.connect(self.refresh)
+        self.panel.new_btn.clicked.connect(self.open_creator)
+        self.creator.cancel.connect(self.refresh)
+        self.creator.create.connect(self.create_pack)
         self.panel.play_btn.clicked.connect(lambda: self.play())
         self.panel.continue_btn.clicked.connect(self._continue)
         self.panel.server_btn.clicked.connect(self._server)
@@ -807,6 +944,28 @@ class HomePage(QWidget):
         self.ctx.settings.selected_pack = pid
         self.ctx.save()
         return pid
+
+    # ---------- own packs ----------
+    def open_creator(self) -> None:
+        self.creator.open()
+        self._set_mode("create")
+
+    def create_pack(self, name: str, mc: str, loader: str, lv: str) -> None:
+        from netlauncher import instances
+        self.busy.start(f"Создаю {name}")
+        self._set_mode("install")
+
+        def job(progress):
+            lp = instances.create(self.ctx.lay, name, mc, loader, lv)
+            self.ctx.installer.ensure(mc, loader, lv, lambda s, c, m: progress(f"Minecraft: {s}", c, m))
+            return lp
+
+        def done(lp):
+            self.ctx.settings.selected_pack = lp.id
+            self.ctx.save()
+            self.refresh()
+
+        jobs.run(job, on_done=done, on_error=self._install_failed, on_progress=self.busy.progress)
 
     # ---------- play ----------
     def _continue(self) -> None:

@@ -618,6 +618,12 @@ class ContentPage(QWidget):
     def reload(self) -> None:
         lib = self.library()
         lp = common.current_pack(self.ctx)
+        vanilla = lp is not None and lp.loader == "vanilla" and self.kind == "mod"
+        self.find_btn.setVisible(not vanilla and self.stack.currentWidget() is not self.browser)
+        if vanilla:
+            self.subtitle.setText("В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge.")
+            self._fill([])
+            return
         if lib is None:
             self.subtitle.setText("Сначала установи сборку на главной.")
             self._fill([])
