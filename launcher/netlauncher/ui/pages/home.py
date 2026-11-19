@@ -22,6 +22,7 @@ from netlauncher.net import HashMismatch, HttpError, Offline
 from netlauncher.pack import MrPack, add_manual, apply_update, load_state, plan_update
 from netlauncher.settings import recommended_ram_mb
 from netlauncher.ui import anim, jobs
+from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
 from netlauncher.ui.skinview import SkinView3D, face
 from netlauncher.ui.theme import qcolor
@@ -475,11 +476,7 @@ class HomePage(QWidget):
             anim.fade_slide_in(w, dx=0, dy=10, ms=260)
 
     def current_pack(self) -> LocalPack | None:
-        packs = localpacks.list_installed(self.ctx.lay)
-        if not packs:
-            return None
-        chosen = next((p for p in packs if p.id == self.ctx.settings.selected_pack), packs[0])
-        return chosen
+        return common.current_pack(self.ctx)
 
     def refresh(self) -> None:
         acc = self.ctx.accounts.load()

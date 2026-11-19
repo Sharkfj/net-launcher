@@ -69,6 +69,12 @@ def qss() -> str:
     QSlider::groove:horizontal {{ height: 4px; background: rgba(255,255,255,0.10); border-radius: 2px; }}
     QSlider::sub-page:horizontal {{ background: {t['accent']}; border-radius: 2px; }}
     QSlider::handle:horizontal {{ background: {t['text']}; width: 16px; height: 16px; margin: -6px 0; border-radius: 8px; }}
+    QComboBox {{ background: rgba(255,255,255,0.05); border: 1px solid {t['border']}; border-radius: 10px;
+               padding: 7px 12px; }}
+    QComboBox:hover {{ border: 1px solid rgba(255,255,255,0.16); }}
+    QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox QAbstractItemView {{ background: #121C30; border: 1px solid {t['border']};
+               selection-background-color: rgba(76,154,255,0.22); outline: none; }}
     QLabel[role="muted"] {{ color: {t['muted']}; }}
     QLabel[role="faint"] {{ color: {t['faint']}; }}
     QLabel[role="danger"] {{ color: {t['danger']}; }}
