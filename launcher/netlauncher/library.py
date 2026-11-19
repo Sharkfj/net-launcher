@@ -138,11 +138,12 @@ class Library:
                 ids.update(i.meta.nested_ids)
         return ids
 
-    def plan_install(self, project_id: str, kind: Kind) -> InstallPlan:
+    def plan_install(self, project_id: str, kind: Kind, source=None) -> InstallPlan:
+        src = source or self.mr
         present = self._installed_projects(kind)
         loader = search_loader(kind, self.loader)
         if project_id in present:
-            p = self.mr.projects([project_id]).get(project_id)
+            p = src.projects([project_id]).get(project_id)
             raise AlreadyInstalled(p.title if p else project_id)
         chosen: list[tuple[str, MrVersion]] = []
         skipped: list[str] = []
@@ -156,12 +157,12 @@ class Library:
             if pid in present:
                 skipped.append(pid)
                 continue
-            v = self.mr.best_version(pid, self.game_version, loader)
+            v = src.best_version(pid, self.game_version, loader)
             if v is None:
                 raise NotAvailable(pid)
             chosen.append((pid, v))
             queue.extend(v.required_deps)
-        projects = self.mr.projects([pid for pid, _ in chosen] + skipped)
+        projects = src.projects([pid for pid, _ in chosen] + skipped)
         items = [(projects[pid], v) for pid, v in chosen if pid in projects]
         skipped_names = [projects[pid].slug if pid in projects else pid for pid in skipped]
         return InstallPlan(items, skipped_names)
@@ -182,10 +183,12 @@ class Library:
         out = []
         for idx, (proj, v) in enumerate(plan.items):
             tmp = self._fetch(v, progress, proj.title)
-            if kind == "mod" and idx > 0:
+            if kind == "mod":
                 meta = read_jar(tmp)
                 if meta and meta.mod_ids and meta.mod_ids[0] in existing_ids:
                     tmp.unlink(missing_ok=True)
+                    if idx == 0:
+                        raise AlreadyInstalled(proj.title)
                     plan.skipped.append(proj.slug)
                     continue
             target = folder / v.primary_file.filename
