@@ -20,7 +20,7 @@ ALLOWED_LICENSES = {"mit", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "lgpl-2
                     "mpl-2.0", "cc0-1.0", "isc", "unlicense"}
 OVERRIDE_DIRS = ("config", "defaultconfigs", "resourcepacks", "shaderpacks", "pointblank")
 OVERRIDE_FILES = ("options.txt",)
-CONTENT_DIRS = {"mods": (".jar",), "resourcepacks": (".zip",), "shaderpacks": (".zip",)}
+CONTENT_DIRS = {"mods": (".jar",), "resourcepacks": (".zip",), "shaderpacks": (".zip",), "pointblank": (".zip",)}
 SIDES = {"required", "optional", "unsupported"}
 GH_API = "https://api.github.com"
 GH_UPLOADS = "https://uploads.github.com"
@@ -52,6 +52,13 @@ def license_allowed(lic: str) -> bool:
         if p in ALLOWED_LICENSES:
             return True
     return False
+
+
+def manual_page(name: str, display_url: str) -> str:
+    """A file that is not on Modrinth: its Modrinth link is dead by definition, so point at CurseForge search."""
+    if display_url and "modrinth.com" not in display_url:
+        return display_url
+    return "https://www.curseforge.com/minecraft/search?search=" + quote(name, safe="")
 
 
 def _side(v: str) -> str:
@@ -118,7 +125,7 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
         if rel.startswith("mods/"):
             meta = read_jar(game_dir / rel)
             if meta and not license_allowed(meta.license):
-                manual.append(ManualFile(rel, digest, meta.name, meta.display_url))
+                manual.append(ManualFile(rel, digest, meta.name, manual_page(meta.name, meta.display_url)))
                 warnings.append(f"{meta.name}: закрытая лицензия, игроки скачают вручную")
                 continue
         overrides.append(rel)
