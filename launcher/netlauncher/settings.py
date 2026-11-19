@@ -20,6 +20,7 @@ class Settings:
     github_token: str = ""
     last_world: str = ""
     source_instance: str = ""
+    selected_pack: str = "net"
 
 
 def load_settings(path: Path) -> Settings:

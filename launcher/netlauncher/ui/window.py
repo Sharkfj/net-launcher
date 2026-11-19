@@ -324,6 +324,11 @@ class MainWindow(QWidget):
             self.unsetCursor()
         super().mouseMoveEvent(e)
 
+    # ---------- account ----------
+    def set_account(self, acc) -> None:
+        self.sidebar.account.setText(acc.name if acc else "Не вошёл")
+        self.sidebar.avatar.set_name(acc.name if acc else "?")
+
     # ---------- tray ----------
     def _setup_tray(self):
         self.tray = None
