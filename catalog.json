@@ -1,0 +1,23 @@
+{
+ "format": 1,
+ "launcher": {
+  "version": "",
+  "urls": {}
+ },
+ "packs": [
+  {
+   "id": "net",
+   "name": ".NET",
+   "description": "Киберпанк-сборка на Create: огромный мир корпораций, импланты и поезда.",
+   "version": "0.1.0",
+   "mc_version": "1.21.1",
+   "loader": "neoforge",
+   "loader_version": "21.1.267",
+   "mrpack_url": "https://github.com/Sharkfj/net-launcher/releases/download/net-v0.1.0/net-0.1.0.mrpack",
+   "mrpack_sha1": "27c626227ba9e6af9c139bef67bcad0dcb1d28e3",
+   "changelog": "Первая версия сборки .NET.",
+   "server": "",
+   "cover_url": ""
+  }
+ ]
+}
