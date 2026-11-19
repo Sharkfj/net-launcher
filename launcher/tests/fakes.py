@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -33,9 +34,10 @@ class FakeHttp:
         self.calls.append(call)
         if self.offline:
             raise Offline(call.url)
-        if call.url not in self.routes:
+        key = (call.method, call.url) if (call.method, call.url) in self.routes else call.url
+        if key not in self.routes:
             raise HttpError(404, call.url)
-        value = self.routes[call.url]
+        value = self.routes[key]
         if callable(value):
             value = value(call)
         if isinstance(value, Exception):
@@ -52,6 +54,8 @@ class FakeHttp:
         value = self._answer(Call(method, url, body=data, headers=headers))
         if isinstance(value, tuple):
             return value
+        if isinstance(value, (dict, list)):
+            return 200, json.dumps(value).encode()
         return 200, value if isinstance(value, bytes) else b""
 
     def download(self, url, dest: Path, sha1=None, sha512=None, progress: Callable | None = None):
