@@ -342,6 +342,20 @@ def test_crash_info(tmp_path): ...  # synthetic crash report text
 - [ ] **Step 5: Visual check** as in Task 10 (home with real screenshots)
 - [ ] **Step 6: Commit** `feat: onboarding and home`
 
+### Task 11b: 3D player model with the Ely.by skin (user request 19.11)
+
+**Files:** Create `launcher/netlauncher/skin.py`, `launcher/netlauncher/ui/skinview.py`, `launcher/tests/test_skin.py`; Modify `ui/pages/home.py` (model on the right side of Home), `ui/window.py` (account chip uses `skin.face()`)
+
+**Interfaces — Produces:**
+- `skin.TEXTURES = "https://skinsystem.ely.by/textures/{name}"` → JSON `{"SKIN": {"url", "metadata": {"model": "slim"}?}}`
+- `@dataclass class Skin: png: bytes; slim: bool`; `skin.fetch(http, name, cache_dir) -> Skin | None` (cached per name for 1 h; offline → cached or None; None → default Steve texture bundled in `netlauncher/ui/assets/steve.png`)
+- `skin.parts(width: int, height: int, slim: bool) -> dict[str, Box]` — `Box(size=(w,h,d), origin=(x,y,z), uv=(u,v), mirror: bool, overlay: Box | None)` for head, body, arm_r, arm_l, leg_r, leg_l; 64×32 legacy skins reuse right arm/leg mirrored for the left; slim arms are 3 px wide; overlay boxes inflated by 0.5 (head) / 0.25 (others)
+- `skin.face(png: bytes) -> QImage` 8×8 face + hat overlay (lives in ui/skinview.py to keep core Qt-free)
+- `ui.skinview.SkinView3D(QWidget)`: orthographic 3D, painter's-algorithm face sort, each face drawn as a textured parallelogram (`QTransform.quadToQuad`, no smoothing → crisp pixels); drag to rotate (yaw ±180°, pitch ±25°) with inertia; idle: slow breathing + arm/leg swing ±6°, gentle yaw sway when not dragged; `set_skin(Skin)`; redraws ≤60 fps only while visible and animating
+- [ ] **Step 1: Failing tests**: `test_parts_modern_vs_legacy` (64×32 → left arm mirror of right, no overlay for arms/legs), `test_slim_arm_width`, `test_fetch_slim_and_cache` (FakeHttp; second call within 1 h makes no request), `test_fetch_offline_uses_cache`, `test_skinview_renders_pixels` (offscreen grab has non-transparent pixels in the centre), `test_back_faces_hidden` (at yaw 0 the back of the head is not drawn)
+- [ ] **Step 2: Run** → FAIL · **Step 3: Implement** · **Step 4: Run** → PASS · **Step 5: Visual check** with the real skin
+- [ ] **Step 6: Commit** `feat: 3d skin model`
+
 ---
 
 ### Task 12: Content pages, Snapshots, Settings
