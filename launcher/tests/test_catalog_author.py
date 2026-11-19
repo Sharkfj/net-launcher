@@ -193,6 +193,7 @@ def test_find_instances(tmp_path, monkeypatch):
     (base / "1.21.1" / "instance.cfg").write_text("")
     (base / "junk").mkdir()
     monkeypatch.setattr(importer.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(importer.sys, "platform", "linux")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     assert importer.find_instances() == [base / "1.21.1"]
 
