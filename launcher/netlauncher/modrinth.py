@@ -72,6 +72,26 @@ def _project(d: dict) -> MrProject:
                      list(d.get("categories") or []))
 
 
+@dataclass
+class ProjectDetails:
+    id: str
+    title: str
+    summary: str
+    author: str
+    downloads: int
+    followers: int
+    categories: list[str]
+    body: str
+    body_format: str  # "markdown" | "html"
+    gallery: list[tuple[str, str]]
+    links: dict[str, str]
+    icon_url: str
+    page_url: str
+
+
+SORTS = ("relevance", "downloads", "newest", "updated")
+
+
 def search_loader(kind: str, instance_loader: str) -> str | None:
     return {"mod": instance_loader, "shader": "iris"}.get(kind)
 
@@ -81,13 +101,43 @@ class Modrinth:
         self.http = http
 
     def search(self, query: str, project_type: str, game_version: str, loader: str | None,
-               offset: int = 0, limit: int = 20) -> list[MrProject]:
+               offset: int = 0, limit: int = 20, sort: str | None = None,
+               category: str | None = None) -> list[MrProject]:
         facets = [["versions:" + game_version], ["project_type:" + project_type]]
         if loader:
             facets.append(["categories:" + loader])
-        params = {"query": query, "facets": json.dumps(facets), "offset": offset, "limit": limit,
-                  "index": "relevance" if query else "downloads"}
+        if category:
+            facets.append(["categories:" + category])
+        index = sort if sort in SORTS else ("relevance" if query else "downloads")
+        params = {"query": query, "facets": json.dumps(facets), "offset": offset, "limit": limit, "index": index}
         return [_project(h) for h in self.http.get_json(f"{API}/search", params=params).get("hits", [])]
+
+    def categories(self, project_type: str) -> list[tuple[str, str]]:
+        tags = self.http.get_json(f"{API}/tag/category") or []
+        names = sorted({t["name"] for t in tags if t.get("project_type") == project_type
+                        and t.get("header") == "categories"})
+        return [(n, n.replace("-", " ").title()) for n in names]
+
+    def details(self, id_or_slug: str) -> ProjectDetails:
+        d = self.http.get_json(f"{API}/project/{id_or_slug}")
+        try:
+            members = self.http.get_json(f"{API}/project/{id_or_slug}/members") or []
+        except Exception:  # noqa: BLE001 - the author line is optional
+            members = []
+        owner = next((m for m in members if str(m.get("role", "")).lower() == "owner"), members[0] if members else None)
+        links = {}
+        for key, title in (("source_url", "Исходники"), ("wiki_url", "Вики"), ("discord_url", "Discord"),
+                           ("issues_url", "Ошибки")):
+            if d.get(key):
+                links[title] = d[key]
+        gallery = [(g["url"], g.get("title") or "") for g in sorted(d.get("gallery") or [],
+                                                                       key=lambda g: not g.get("featured"))]
+        ptype = d.get("project_type") or "mod"
+        return ProjectDetails(d.get("id", id_or_slug), d.get("title", ""), d.get("description", ""),
+                              (owner or {}).get("user", {}).get("username", ""), int(d.get("downloads") or 0),
+                              int(d.get("followers") or 0), list(d.get("categories") or []), d.get("body") or "",
+                              "markdown", gallery, links, d.get("icon_url") or "",
+                              f"https://modrinth.com/{ptype}/{d.get('slug') or id_or_slug}")
 
     def project(self, id_or_slug: str) -> MrProject:
         return _project(self.http.get_json(f"{API}/project/{id_or_slug}"))
