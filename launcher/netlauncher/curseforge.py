@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from netlauncher.modmeta import sha1_file
-from netlauncher.modrinth import MrFile, MrProject, MrVersion
+from netlauncher.modrinth import MrFile, MrProject, MrVersion, ProjectDetails
 from netlauncher.net import Http
 
 API = "https://api.curseforge.com/v1"
@@ -13,6 +13,7 @@ GAME = 432
 CLASSES = {"mod": 6, "resourcepack": 12, "shader": 6552}
 LOADERS = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
 RELEASE = {1: "release", 2: "beta", 3: "alpha"}
+SORT_FIELDS = {"relevance": 1, "downloads": 6, "updated": 3, "newest": 11}
 WHITESPACE = {9, 10, 13, 32}
 
 
@@ -91,13 +92,39 @@ class CurseForge:
                          [file], deps, f.get("fileDate", ""))
 
     def search(self, query: str, kind: str, game_version: str, loader: str | None,
-               offset: int = 0, limit: int = 20) -> list[MrProject]:
+               offset: int = 0, limit: int = 20, sort: str | None = None,
+               category: str | None = None) -> list[MrProject]:
         params = {"gameId": GAME, "classId": CLASSES[kind], "searchFilter": query, "gameVersion": game_version,
-                  "sortField": 2, "sortOrder": "desc", "index": offset, "pageSize": limit}
+                  "sortField": SORT_FIELDS.get(sort or "", 2), "sortOrder": "desc", "index": offset,
+                  "pageSize": limit}
+        if category:
+            params["categoryId"] = int(category)
         if kind == "mod" and loader in LOADERS:
             params["modLoaderType"] = LOADERS[loader]
         data = self.http.get_json(f"{API}/mods/search", params=params, headers=self._h()).get("data") or []
         return [self.to_project(m) for m in data]
+
+    def categories(self, kind: str) -> list[tuple[str, str]]:
+        data = self.http.get_json(f"{API}/categories", params={"gameId": GAME, "classId": CLASSES[kind]},
+                                  headers=self._h()).get("data") or []
+        cats = [c for c in data if c.get("parentCategoryId") is not None]
+        return sorted(((str(c["id"]), c["name"]) for c in cats), key=lambda x: x[1])
+
+    def details(self, project_id: str) -> ProjectDetails:
+        mid = _num(project_id)
+        m = self.http.get_json(f"{API}/mods/{mid}", headers=self._h()).get("data") or {}
+        try:
+            body = self.http.get_json(f"{API}/mods/{mid}/description", headers=self._h()).get("data") or ""
+        except Exception:  # noqa: BLE001
+            body = m.get("summary", "")
+        lk = m.get("links") or {}
+        links = {title: lk[key] for key, title in (("sourceUrl", "Исходники"), ("wikiUrl", "Вики"),
+                                                   ("issuesUrl", "Ошибки")) if lk.get(key)}
+        return ProjectDetails(f"cf:{mid}", m.get("name", ""), m.get("summary", ""),
+                              ((m.get("authors") or [{}])[0]).get("name", ""), int(m.get("downloadCount") or 0), 0,
+                              [c.get("name", "") for c in m.get("categories") or []], body, "html",
+                              [(sc["url"], sc.get("title") or "") for sc in m.get("screenshots") or []], links,
+                              (m.get("logo") or {}).get("thumbnailUrl") or "", lk.get("websiteUrl", ""))
 
     def _mods(self, ids: list[int]) -> list[dict]:
         if not ids:
