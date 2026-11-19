@@ -22,5 +22,8 @@
    "server": "",
    "cover_url": ""
   }
- ]
+ ],
+ "friends": {
+  "url": "https://net-friends.net-friends.workers.dev"
+ }
 }

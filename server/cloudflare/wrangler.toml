@@ -8,4 +8,4 @@ ELY_HAS_JOINED = "https://authserver.ely.by/session/hasJoined"
 [[d1_databases]]
 binding = "DB"
 database_name = "net-friends"
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "43d7f8da-9403-4c3d-a61e-467bdc59e105"

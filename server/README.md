@@ -76,6 +76,8 @@ python3 friends_server.py --host 0.0.0.0 --port 8770 --db friends.db
 
 ## Cloudflare Workers (free hosting)
 
+The live instance for the .NET catalog: https://net-friends.net-friends.workers.dev
+
 `server/cloudflare/` is the same service for Cloudflare Workers + D1 (free plan, no card, does not sleep).
 
 ```bash
