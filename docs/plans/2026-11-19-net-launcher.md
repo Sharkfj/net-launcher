@@ -25,7 +25,7 @@
 - Colors: window `rgba(12,18,32,0.72)`, card `rgba(255,255,255,0.06)`, card border `rgba(255,255,255,0.08)`, accent `#4C9AFF`, hover `#6AAEFF`, pressed `#3A86F0`, text `#E8EEF8`, secondary `#9AA8BF`, radius 14–18 px. No glow effects.
 - Animation timings: window open scale 0.97→1 + fade; page switch 24 px slide + fade 220 ms OutCubic; hover 120 ms; list stagger 30 ms/row, max 12 rows. All disabled when `Settings.animations` is False.
 - Ely.by: `https://authserver.ely.by/auth/{authenticate,refresh,validate,invalidate}`; 2FA = password `"<pass>:<code>"`; JVM arg `-javaagent:<authlib-injector.jar>=ely.by`.
-- Pack for MC `1.21.1`, loader `neoforge` `21.1.267`, pack id `net`, display name `.NET`.
+- Multiple packs (catalog). First pack: MC `1.21.1`, loader `neoforge` `21.1.267`, pack id `net`, display name `.NET`. Each pack lives in `instances/<pack_id>/`.
 - Git: local commits after each task are fine; **nothing is pushed or published to GitHub without the user's explicit «да»**.
 
 ## Review Focus
@@ -34,7 +34,7 @@
 2. **Cyrillic/space paths** (home `~/Рабочий стол`, Windows user `Вася Пупкин`) → scan, snapshot, update and command building all work. *(Task 4: `test_snapshot_cyrillic_paths`, Task 8: `test_command_with_cyrillic_dirs`)*
 3. **Player state survives pack updates**: own mods, a disabled client-only pack mod, edited `options.txt`, worlds. *(Task 6: `test_update_preserves_player_state`)*
 4. **Expired/revoked Ely.by token at Play** → silent refresh, else the login screen, never a crash or a game started with a dead token. *(Task 7: `test_ensure_valid_refreshes_then_needs_login`)*
-5. **GitHub unreachable (blocked/offline)** → the installed pack still launches; update check failure is a quiet notice. *(Task 9: `test_check_update_offline_is_none`)*
+5. **GitHub unreachable (blocked/offline)** → installed packs still launch; catalog failure is a quiet notice. *(Task 9: `test_fetch_offline_is_none`)*
 
 ---
 
@@ -279,31 +279,37 @@ def test_crash_info(tmp_path): ...  # synthetic crash report text
 
 ---
 
-### Task 9: Channel, author build and publish, PineconeMC import
+### Task 9: Catalog, author build and publish, PineconeMC import
 
-**Files:** Create `launcher/netlauncher/channel.py`, `launcher/netlauncher/author.py`, `launcher/netlauncher/importer.py`, `launcher/tests/test_channel_author.py`
+> Revised 19.11 (user): the launcher serves a **catalog of packs**, not one pack. The author can publish a brand-new pack and every player sees it at once; each pack may carry a server address.
+
+**Files:** Create `launcher/netlauncher/catalog.py`, `launcher/netlauncher/author.py`, `launcher/netlauncher/importer.py`, `launcher/tests/test_catalog_author.py`
 
 **Interfaces:**
 - Consumes: Tasks 2, 3, 6
 - Produces:
-  - `@dataclass class Channel: pack_version: str; pack_url: str; pack_sha1: str; changelog: str; launcher_version: str; launcher_urls: dict[str, str]`
-  - `channel.latest(http, repo: str) -> Channel | None` — GET `https://api.github.com/repos/{repo}/releases/latest`, download its `channel.json` asset; `Offline`/`HttpError` → `None`
-  - `channel.is_newer(a: str, b: str) -> bool` (numeric dotted compare)
-  - `channel.check_update(http, repo, installed_version: str | None) -> Channel | None` (None when offline or not newer)
-  - `channel.PACK_REPO: str = ""` (filled once the GitHub repo exists); env `NET_LAUNCHER_CHANNEL` = local path or URL of a `channel.json` overrides the GitHub lookup (`channel.resolve(http) -> Channel | None` uses it first) — used for tests and the friend simulation in Task 14
-  - `ALLOWED_LICENSES = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "LGPL-2.1", "LGPL-3.0", "GPL-3.0", "MPL-2.0", "CC0-1.0", "ISC", "Unlicense"}` (case-insensitive, also `*-only`/`*-or-later` forms)
+  - catalog file `catalog.json` on the repo's default branch: `{"format": 1, "launcher": {"version", "urls": {"windows", "linux"}}, "packs": [PackEntry…]}`
+  - `@dataclass class PackEntry: id: str; name: str; description: str; version: str; mc_version: str; loader: str; loader_version: str; mrpack_url: str; mrpack_sha1: str; changelog: str; server: str = ""; cover_url: str = ""`
+  - `@dataclass class Catalog: launcher_version: str; launcher_urls: dict[str, str]; packs: list[PackEntry]` with `.get(pack_id) -> PackEntry | None`
+  - `catalog.PACK_REPO: str = ""` (set once the GitHub repo exists); env `NET_LAUNCHER_CATALOG` = local path or URL of a `catalog.json` overrides GitHub (tests, friend simulation)
+  - `catalog.fetch(http, repo: str) -> Catalog | None` — GET `https://api.github.com/repos/{repo}/contents/catalog.json` with `Accept: application/vnd.github.raw+json`; `Offline`/`HttpError` → `None`
+  - `catalog.resolve(http) -> Catalog | None` (env override first, then `PACK_REPO`)
+  - `catalog.is_newer(a: str, b: str) -> bool` (numeric dotted compare)
+  - `catalog.updates(cat: Catalog | None, installed: dict[str, str]) -> dict[str, PackEntry]` (pack_id → newer entry; `None` catalog → `{}`)
+  - `ALLOWED_LICENSES = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "LGPL-2.1", "LGPL-3.0", "GPL-3.0", "MPL-2.0", "CC0-1.0", "ISC", "Unlicense"}` (case-insensitive, also `*-only`/`*-or-later`)
   - `OVERRIDE_DIRS = ("config", "defaultconfigs", "resourcepacks", "shaderpacks", "pointblank")`, `OVERRIDE_FILES = ("options.txt",)`
   - `@dataclass class PackDiff: added: list[str]; removed: list[str]; updated: list[str]`; `@dataclass class BuildResult: index: PackIndex; overrides: list[str]; warnings: list[str]; diff: PackDiff`
-  - `author.build(game_dir, modrinth, version, changelog, prev: PackIndex | None) -> BuildResult` — jar → Modrinth by sha1 (env from project `client_side`/`server_side`); else allowed license → `overrides/mods/<file>`; else `ManualFile` (page = jar `display_url`) + Russian warning `"<name>: закрытая лицензия, игроки скачают вручную"`
-  - `author.write(result, game_dir, dest_dir) -> Path` (`net-<version>.mrpack`)
-  - `author.publish(http, repo, token, result, mrpack: Path) -> str` — POST `/repos/{repo}/releases` (`tag_name: "pack-v<version>"`, `name: ".NET <version>"`, `body: changelog`, `make_latest: "true"`), upload `net-<version>.mrpack` and `channel.json` to `uploads.github.com/.../assets?name=…`; launcher fields from the newest `launcher-v*` release (if any). Returns release `html_url`.
+  - `author.build(game_dir, modrinth, name, version, mc_version, loader, loader_version, changelog, prev: PackIndex | None) -> BuildResult` — jar → Modrinth by sha1 (env from project `client_side`/`server_side`); else allowed license → `overrides/mods/<file>`; else `ManualFile` (page = jar `display_url`) + warning `"<name>: закрытая лицензия, игроки скачают вручную"`
+  - `author.write(result, game_dir, dest_dir) -> Path` (`<pack_id>-<version>.mrpack`)
+  - `author.publish(http, repo, token, entry: PackEntry, mrpack: Path) -> str` — create release `tag_name: "<pack_id>-v<version>"`, `name: "<name> <version>"`, `body: changelog`, `make_latest: "false"`; upload the mrpack (`uploads.github.com/.../assets?name=…`); set `entry.mrpack_url` to the asset `browser_download_url`; GET + PUT `contents/catalog.json` (with its `sha`) inserting or replacing the entry by `id` (new pack = appended). Returns release `html_url`.
+  - `author.new_pack_id(name: str, existing: set[str]) -> str` (latin slug, unique: `.NET` → `net`, `Мой пак` → `moi-pak`)
   - `importer.find_instances() -> list[Path]` (Linux `~/.local/share/{ElyPrismLauncher,PrismLauncher}/instances/*`, Windows `%APPDATA%\{ElyPrismLauncher,PrismLauncher}\instances\*`; must contain `instance.cfg`)
   - `importer.read_versions(inst: Path) -> tuple[str, str, str]` (mc, loader, loader_version from `mmc-pack.json`)
   - `importer.import_instance(inst: Path, game_dir: Path, progress=None) -> None` — copies `inst/minecraft/*` except `logs`, `crash-reports`, `downloads`, `telemetry`, `.cache`
 
-- [ ] **Step 1: Failing tests**: `test_is_newer` (`"0.10" > "0.9"`), `test_check_update_offline_is_none`, `test_build_classifies_mods` (modrinth hit → files; MIT jar → overrides; ARR jar → manual + warning), `test_build_diff`, `test_publish_calls` (FakeHttp records release POST with `tag_name == "pack-v0.2"` then two asset uploads), `test_import_skips_logs` (also `read_versions` on a fixture `mmc-pack.json` → `("1.21.1", "neoforge", "21.1.267")`)
+- [ ] **Step 1: Failing tests**: `test_is_newer` (`"0.10" > "0.9"`), `test_fetch_offline_is_none`, `test_env_override_local_file`, `test_updates_map`, `test_build_classifies_mods` (modrinth hit → files; MIT jar → overrides; ARR jar → manual + warning), `test_build_diff`, `test_publish_new_pack_appends_entry` and `test_publish_update_replaces_entry` (FakeHttp records release POST `tag_name == "net-v0.2"`, asset upload, catalog PUT body decodes to the expected packs list with `sha` sent), `test_new_pack_id`, `test_import_skips_logs` (+ `read_versions` on a fixture `mmc-pack.json` → `("1.21.1", "neoforge", "21.1.267")`)
 - [ ] **Step 2: Run** → FAIL · **Step 3: Implement** · **Step 4: Run** → PASS
-- [ ] **Step 5: Commit** `feat: update channel, author build/publish, prism import`
+- [ ] **Step 5: Commit** `feat: pack catalog, author build/publish, prism import`
 
 ---
 
@@ -334,7 +340,8 @@ def test_crash_info(tmp_path): ...  # synthetic crash report text
 **Interfaces:**
 - Consumes: Tasks 6–10
 - Produces: `OnboardingPage(ctx)` with signals `finished()`; `HomePage(ctx)` with `play()`, `refresh()`
-- Onboarding flow: welcome (`".NET"`, `"Добро пожаловать"`) → Ely.by login (fields `Логин или e-mail`, `Пароль`, button `Войти`, link `Создать аккаунт Ely.by` → `https://account.ely.by/register`, 2FA field appears on `TwoFactorRequired`, errors: `"Неверный логин или пароль"`, `"Ely.by не отвечает, проверь интернет"`) → if a Prism instance named `1.21.1` exists and author mode is possible: offer `"Перенести сборку из PineconeMC"` (importer) else install: latest channel pack → `GameInstaller.ensure` → `apply_update`, one combined `SmoothBar` with step text and MB/s → manual-file step if needed (`"Этот мод нельзя скачать автоматически: …"`, button `Открыть страницу`, drop zone `Перетащи файл сюда`)
+- Pack switcher on Home: installed packs as chips + `Доступные сборки` list from the catalog (cover, name, description, `Установить`); selected pack id in `Settings.selected_pack` (default `net`); `Играть на сервере` button (quickPlayMultiplayer = entry.server) when the entry has a server.
+- Onboarding flow: welcome (`".NET"`, `"Добро пожаловать"`) → Ely.by login (fields `Логин или e-mail`, `Пароль`, button `Войти`, link `Создать аккаунт Ely.by` → `https://account.ely.by/register`, 2FA field appears on `TwoFactorRequired`, errors: `"Неверный логин или пароль"`, `"Ely.by не отвечает, проверь интернет"`) → choose a pack from the catalog (pre-selected `net`) → install: catalog entry mrpack → `GameInstaller.ensure` → `apply_update`, one combined `SmoothBar` with step text and MB/s → manual-file step if needed (`"Этот мод нельзя скачать автоматически: …"`, button `Открыть страницу`, drop zone `Перетащи файл сюда`)
 - Home: background slideshow from `game_dir/screenshots/*.png` (slow 1.00→1.06 zoom over 20 s, crossfade 1.2 s; none → gradient `#0C1220→#14305A`), title `.NET`, line `NeoForge 1.21.1 · N модов`, pack version, update badge `"Вышло обновление <v>"` + button `Обновить`, `AccentButton("ИГРАТЬ", breathing=True)`, `"Продолжить: <мир>"` (newest `saves/*/level.dat` mtime), `"Что нового"` card (channel changelog), notice `"Вышла новая версия лаунчера <v>"` + `Скачать` (opens the platform URL from `Channel.launcher_urls`) when `is_newer(channel.launcher_version, __version__)`. Play: `ensure_valid` → `NeedLogin` → onboarding login; else `GameInstaller.ensure` (fast when present) → `build_command` → `GameProcess.start`; status line follows `LogProgress`; at `MENU`/`WORLD` → `hide_to_tray()`; exit code ≠0 or `crash_info` → restore + crash card (`"Игра вылетела"`, description, suspects, `Открыть отчёт`)
 
 - [ ] **Step 1: Failing tests** (offscreen, fakes): `test_onboarding_login_error_message`, `test_onboarding_2fa_field_appears`, `test_home_shows_update_badge`, `test_home_continue_world_newest`, `test_play_needlogin_routes_to_login`, `test_crash_card_after_nonzero_exit` (fake GameProcess)
@@ -367,7 +374,7 @@ def test_crash_info(tmp_path): ...  # synthetic crash report text
 - Produces: `ContentPage(ctx, kind: Kind)`, `SnapshotsPage(ctx)`, `SettingsPage(ctx)`
 - Content: header with search box (filters installed), filter chips `Все / Выключенные / Есть обновления`, rows (icon, name, version, pack badge `сборка` / `моё`, `Toggle`, menu `Удалить`), disabled toggle + tooltip `"Нужен на сервере — выключить нельзя"` for locked; button `Найти` opens an in-page Modrinth browser (debounced 300 ms search, cards with icon/title/description/downloads, `Установить` → shows plan `"Будет установлено: … (зависимости: …)"` → confirm), button `Проверить обновления` → list + `Обновить всё`
 - Snapshots: list (date, reason, size), `Откатить` (confirm dialog `"Вернуть моды и конфиги к состоянию от <дата>? Текущее состояние сохранится отдельным снимком."`), `Удалить`
-- Settings: RAM slider (step 512 MB, 2048..min(16384, total), label `"Рекомендуется N ГБ"`), fullscreen, resolution, `Анимации`, `Открыть папку игры`, `Выйти из аккаунта`; section `Автор сборки` (toggle `author_mode`; when on: `Репозиторий GitHub (user/repo)`, `Токен`, version field, changelog box, `Собрать` → shows diff + warnings, `Опубликовать` → confirm `"Опубликовать .NET <v> для всех игроков?"`)
+- Settings: RAM slider (step 512 MB, 2048..min(16384, total), label `"Рекомендуется N ГБ"`), fullscreen, resolution, `Анимации`, `Открыть папку игры`, `Выйти из аккаунта`; section `Автор сборки` (toggle `author_mode`; when on: `Репозиторий GitHub (user/repo)`, `Токен`; pack picker (existing catalog packs + `Новая сборка` → name, description, server address, source = PineconeMC instance via importer or any folder); version field (pre-filled next patch), changelog box, `Собрать` → diff + warnings, `Опубликовать` → confirm `"Опубликовать <name> <v> для всех игроков?"`)
 
 - [ ] **Step 1: Failing tests**: `test_content_lists_and_filters`, `test_locked_toggle_disabled`, `test_install_flow_shows_plan`, `test_snapshot_restore_confirm`, `test_settings_ram_persist`, `test_author_section_hidden_when_off`
 - [ ] **Step 2: Run** → FAIL · **Step 3: Implement** · **Step 4: Run** → PASS
