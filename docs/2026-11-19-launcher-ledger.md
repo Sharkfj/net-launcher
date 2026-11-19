@@ -1,5 +1,5 @@
-# SDD ledger — plan: /home/Shark/Games/NET/docs/plans/2026-11-19-net-launcher.md
-Spec: /home/Shark/Games/NET/docs/2026-11-19-launcher-design.md
+# SDD ledger — plan: ~/Games/NET/docs/plans/2026-11-19-net-launcher.md
+Spec: ~/Games/NET/docs/2026-11-19-launcher-design.md
 Setup: Ruling: new repo, isolation via branch feat/launcher (main holds only docs) instead of a worktree — repo created this session, nothing else to protect — cost if wrong: none.
 Setup: Ruling: repo-local git identity "Shark <shark@net.local>" — user's real email must not leak into a public repo — cost: rewrite author before first push.
 Pre-flight:

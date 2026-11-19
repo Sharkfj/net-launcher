@@ -9,7 +9,7 @@ from pathlib import Path
 
 from netlauncher.net import Http, HttpError, Offline
 
-PACK_REPO = ""  # "<user>/<repo>", filled in once the GitHub repository exists
+PACK_REPO = "Sharkfj/net-launcher"
 CATALOG_PATH = "catalog.json"
 
 
