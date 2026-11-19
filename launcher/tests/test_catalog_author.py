@@ -195,3 +195,23 @@ def test_find_instances(tmp_path, monkeypatch):
     monkeypatch.setattr(importer.Path, "home", lambda: tmp_path)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     assert importer.find_instances() == [base / "1.21.1"]
+
+
+def test_build_pointblank_from_modrinth_and_manual_page_fallback(tmp_path):
+    gd = tmp_path / "сборка"
+    mr, _ = _mr_world(gd)
+    gun = b"gun-pack-zip"
+    (gd / "pointblank").mkdir()
+    (gd / "pointblank" / "Cyberpunk_2077_Guns_Pack_1.20.5.zip").write_bytes(gun)
+    ver = {"id": "g1", "project_id": "GUNS", "version_number": "1.20.5", "version_type": "release",
+           "game_versions": ["1.21.1"], "loaders": ["datapack"], "date_published": "2026-01-01", "dependencies": [],
+           "files": [{"url": "https://cdn.modrinth.com/data/GUNS/versions/g1/guns.zip", "filename": "guns.zip",
+                      "primary": True, "size": len(gun), "hashes": {"sha1": sha1(gun), "sha512": sha512(gun)}}]}
+    old = mr.http.routes[f"{API}/version_files"]
+    mr.http.routes[f"{API}/version_files"] = lambda c: {**old(c), **({sha1(gun): ver} if sha1(gun) in c.body["hashes"] else {})}
+    (gd / "mods" / "chromeware-1.3.0.jar").write_bytes(jar_bytes(toml=toml_for(
+        "chromeware", "Create: Chromeware", license="All Rights Reserved", url="https://modrinth.com/project/gone")))
+    res = author.build(gd, mr, ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", "", None)
+    assert "pointblank/Cyberpunk_2077_Guns_Pack_1.20.5.zip" in [f.path for f in res.index.files]
+    assert not any(o.startswith("pointblank/") for o in res.overrides)
+    assert res.index.manual[0].page_url == "https://www.curseforge.com/minecraft/search?search=Create%3A%20Chromeware"
