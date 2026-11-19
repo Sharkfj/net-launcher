@@ -755,7 +755,7 @@ class HomePage(QWidget):
                                          sha1=entry.mrpack_sha1 or None)
         pack = MrPack.open(mp_path)
         plan = plan_update(pack, gd, load_state(gd))
-        apply_update(plan, pack, gd, self.ctx.http, lay.cache, lay.snapshots,
+        apply_update(plan, pack, gd, self.ctx.http, lay.cache, lay.snapshots / entry.id,
                      lambda name, cur, mx: progress(f"Скачиваю {name}", cur, mx))
         localpacks.save(lay, localpacks.from_entry(entry))
         self.ctx.installer.ensure(entry.mc_version, entry.loader, entry.loader_version,
