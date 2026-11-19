@@ -73,3 +73,20 @@ python3 friends_server.py --host 0.0.0.0 --port 8770 --db friends.db
 ```
 
 Игрок может вписать адрес и сам: Настройки → Лаунчер → Сервер друзей.
+
+## Cloudflare Workers (free hosting)
+
+`server/cloudflare/` is the same service for Cloudflare Workers + D1 (free plan, no card, does not sleep).
+
+```bash
+cd server/cloudflare
+npm install
+npx wrangler login
+npx wrangler d1 create net-friends          # put the printed database_id into wrangler.toml
+npx wrangler d1 execute net-friends --remote --file schema.sql
+npx wrangler deploy                          # prints https://net-friends.<your-subdomain>.workers.dev
+```
+
+Then put that address into `catalog.json` → `"friends": {"url": "…"}`.
+
+Тот же сервис для бесплатного Cloudflare Workers лежит в `server/cloudflare/`, команды выше.
