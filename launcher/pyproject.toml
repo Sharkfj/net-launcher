@@ -7,7 +7,7 @@ name = "netlauncher"
 dynamic = ["version"]
 description = ".NET Minecraft pack launcher"
 requires-python = ">=3.10"
-dependencies = ["PySide6>=6.7", "minecraft-launcher-lib==8.0", "requests>=2.31"]
+dependencies = ["PySide6>=6.7", "minecraft-launcher-lib==8.0", "requests>=2.31", "markdown>=3.5"]
 
 [project.scripts]
 net-launcher = "netlauncher.__main__:main"

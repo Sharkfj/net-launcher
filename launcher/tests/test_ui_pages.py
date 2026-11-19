@@ -201,3 +201,82 @@ def test_settings_theme_switch(env):
     assert w.theme == "solid" and ctx.settings.theme == "solid" and page.theme_chips["solid"].active
     page.set_theme("glass")
     assert w.theme == "glass"
+
+
+def _hit(i):
+    return {"project_id": f"p{i}", "slug": f"p{i}", "title": f"Mod {i}", "description": "d", "downloads": i,
+            "icon_url": "", "project_type": "mod", "client_side": "required", "server_side": "optional"}
+
+
+def test_catalog_sort_category_and_more(env):
+    w, ctx, gd, _ = env
+    ctx.http.routes[f"{API}/tag/category"] = [{"name": "technology", "project_type": "mod", "header": "categories"}]
+    ctx.http.routes[f"{API}/search"] = lambda c: {"hits": [_hit(int(c.params["offset"]) + i) for i in range(20)]}
+    w.open_page("mods")
+    page = w.page("mods")
+    page.open_browser()
+    b = page.browser
+    pump(until=lambda: len(b.cards) == 20 and b.category.count() == 2)
+    assert [b.category.itemText(i) for i in range(b.category.count())] == ["Все категории", "Technology"]
+    b.set_sort("newest")
+    pump(until=lambda: ctx.http.calls[-1].params.get("index") == "newest" and len(b.cards) == 20)
+    b.category.setCurrentIndex(1)
+    pump(until=lambda: ["categories:technology"] in json.loads(ctx.http.calls[-1].params["facets"]))
+    pump(until=lambda: len(b.cards) == 20)
+    assert b.more_btn.isVisibleTo(b)
+    b.more_btn.click()
+    pump(until=lambda: len(b.cards) == 40)
+    assert ctx.http.calls[-1].params["offset"] == 20 and b.cards[39].title.text() == "Mod 39"
+
+
+def test_detail_panel_info_and_deps(env):
+    w, ctx, gd, _ = env
+    dep = {"id": "dep-1", "project_id": "dep", "version_number": "1", "version_type": "release",
+           "game_versions": ["1.21.1"], "loaders": ["neoforge"], "date_published": "2026-01-01", "dependencies": [],
+           "files": [{"url": "https://cdn/dep.jar", "filename": "dep.jar", "primary": True, "size": len(MINE) + 1,
+                      "hashes": {"sha1": sha1(b"dep"), "sha512": sha512(b"dep")}}]}
+    ver = json.loads(json.dumps(ctx.http.routes[f"{API}/project/shoulder/version"]))
+    ver[0]["dependencies"] = [{"project_id": "dep", "dependency_type": "required"}]
+    ctx.http.routes[f"{API}/project/shoulder/version"] = ver
+    ctx.http.routes[f"{API}/project/dep/version"] = [dep]
+    ctx.http.downloads["https://cdn/dep.jar"] = b"dep"
+    ctx.http.routes[f"{API}/projects"] = lambda c: [
+        {"id": i, "slug": i, "title": {"shoulder": "Shoulder Surfing", "dep": "Dep Lib"}[i], "description": "",
+         "downloads": 1, "icon_url": "", "project_type": "mod", "client_side": "required", "server_side": "optional"}
+        for i in json.loads(c.params["ids"])]
+    ctx.http.routes[f"{API}/project/shoulder"] = {
+        "id": "shoulder", "slug": "shoulder", "title": "Shoulder Surfing", "description": "Камера из-за плеча",
+        "body": "## Как это работает\nКамера сдвигается вбок.", "downloads": 100, "followers": 2,
+        "categories": ["utility"], "icon_url": "", "gallery": [{"url": "https://i/1.png", "title": "Вид"}]}
+    ctx.http.routes[f"{API}/project/shoulder/members"] = [{"role": "Owner", "user": {"username": "Exopandora"}}]
+    w.open_page("mods")
+    page = w.page("mods")
+    page.open_browser()
+    b = page.browser
+    pump(until=lambda: len(b.cards) == 1)
+    b.cards[0].select()
+    panel = b.detail
+    pump(until=lambda: panel.deps.text().startswith("Вместе с ним"))
+    assert panel.isVisibleTo(b) and panel.title.text() == "Shoulder Surfing"
+    assert panel.meta.text().startswith("Exopandora")
+    assert "Камера сдвигается вбок." in panel.body.toPlainText()
+    assert len(panel.thumbs) == 1
+    assert panel.deps.text() == "Вместе с ним установятся: Dep Lib."
+    panel.install_btn.click()
+    pump(until=lambda: (gd / "mods" / "ss.jar").exists() and (gd / "mods" / "dep.jar").exists())
+    assert (gd / "mods" / "dep.jar").exists()
+
+
+def test_richtext_loads_remote_image(qapp, home):
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QTextDocument
+    from netlauncher.ui.richtext import RichText
+    from tests.test_skin import _two_tone_png
+    http = FakeHttp(downloads={"https://i/x.png": _two_tone_png()})
+    rt = RichText(http, home.cache)
+    rt.resize(500, 400)
+    rt.show()
+    rt.set_markdown("Текст\n\n![x](https://i/x.png)")
+    pump(until=lambda: rt.loaded("https://i/x.png"))
+    img = rt.document().resource(QTextDocument.ResourceType.ImageResource, QUrl("https://i/x.png"))
+    assert img is not None and not img.isNull()
