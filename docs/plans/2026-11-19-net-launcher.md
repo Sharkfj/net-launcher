@@ -363,6 +363,22 @@ def test_crash_info(tmp_path): ...  # synthetic crash report text
 - [ ] **Step 2: Run** → FAIL · **Step 3: Implement** · **Step 4: Run** → PASS · **Step 5: Visual check** with the real skin
 - [ ] **Step 6: Commit** `feat: 3d skin model`
 
+### Task 15: CurseForge as a second source (user request 19.11)
+
+**Files:** Create `launcher/netlauncher/curseforge.py`, `launcher/tests/test_curseforge.py`; Modify `library.py` (`plan_install(project_id, kind, source=None)`), `author.build(..., cf=None)`, `settings.Settings.curseforge_key`, `ui/pages/content.py` (source chips in Browser), `ui/pages/settings_page.py` (key field)
+
+**Interfaces — Produces:**
+- `curseforge.API = "https://api.curseforge.com/v1"`, header `x-api-key`; game 432; classes mod 6, resourcepack 12, shader 6552; loaders neoforge 6, forge 1, fabric 4, quilt 5
+- `murmur2(data: bytes) -> int` — CurseForge fingerprint (MurmurHash2, seed 1, bytes 9/10/13/32 removed)
+- `class CurseForge(http, key)` with the same duck-typed surface Library uses: `search(query, kind, game_version, loader) -> list[MrProject]` (ids `"cf:<modId>"`), `projects(ids) -> dict[str, MrProject]`, `best_version(project_id, game_version, loader) -> MrVersion | None` (files carry `downloadUrl`; a file without one raises `NotDistributable(name, page_url)`), `match_files(paths) -> dict[Path, tuple[mod_json, file_json]]` (POST `/fingerprints/432`)
+- `author.build(..., cf: CurseForge | None = None)`: jars not on Modrinth but matched on CurseForge → `PackFile` with the CurseForge `downloadUrl` (players need no key), or `ManualFile` with the exact CurseForge file page when distribution is off
+- [ ] Tests: `test_murmur2_known_value`, `test_search_maps_projects`, `test_best_version_prefers_release_and_deps`, `test_not_distributable`, `test_build_uses_curseforge_url_and_exact_page`, UI `test_browser_source_switch_requires_key`
+
+### Task 16: Change skin (user request 19.11)
+
+**Files:** Modify `skin.py` (`png_size(data) -> tuple[int, int]`, `fetch(..., force=False)`), `ui/pages/home.py` (button `Сменить скин` under the model → pick PNG → live preview with `Тонкие руки` toggle → `Загрузить на Ely.by` opens `https://ely.by/load`, `Обновить` re-fetches with `force=True`)
+- [ ] Tests: `test_png_size_and_reject`, `test_fetch_force_bypasses_cache`, UI `test_skin_preview_from_file`
+
 ---
 
 ### Task 12: Content pages, Snapshots, Settings
