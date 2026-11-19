@@ -7,7 +7,7 @@ import hashlib
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
-from PySide6.QtWidgets import QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
+from PySide6.QtWidgets import QComboBox, QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
 
 from netlauncher import localpacks
 from netlauncher.curseforge import CurseForge, NotDistributable
@@ -104,10 +104,12 @@ class ItemRow(GlassCard):
 
 class ResultCard(GlassCard):
     install = Signal(object)
+    selected = Signal(object)
 
     def __init__(self, project, kind: str, parent=None):
         super().__init__(parent, radius=14)
         self.project = project
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         row = hbox(self, (14, 12, 12, 12), 14)
         self.icon = Icon(kind, 48)
         row.addWidget(self.icon)
@@ -123,6 +125,14 @@ class ResultCard(GlassCard):
         self.install_btn.clicked.connect(lambda: self.install.emit(self.project))
         row.addWidget(self.install_btn)
 
+    def select(self) -> None:
+        self.selected.emit(self.project)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.select()
+        super().mousePressEvent(e)
+
 
 def _scroll(inner: QWidget) -> QScrollArea:
     sa = QScrollArea()
@@ -132,14 +142,226 @@ def _scroll(inner: QWidget) -> QScrollArea:
     return sa
 
 
+class Thumb(QWidget):
+    clicked = Signal(str)
+
+    def __init__(self, url: str, title: str, parent=None):
+        super().__init__(parent)
+        self.url, self.title = url, title
+        self.setFixedSize(176, 99)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(title)
+        self.pm: QPixmap | None = None
+
+    def set_bytes(self, data: bytes) -> None:
+        pm = QPixmap()
+        if pm.loadFromData(data):
+            self.pm = pm
+            self.update()
+
+    def mousePressEvent(self, e):  # noqa: N802
+        self.clicked.emit(self.url)
+
+    def paintEvent(self, e):  # noqa: N802
+        from PySide6.QtGui import QPainterPath
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), 10, 10)
+        p.setClipPath(path)
+        p.fillRect(self.rect(), qcolor("rgba(255,255,255,0.05)"))
+        if self.pm:
+            pm = self.pm.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(int((self.width() - pm.width()) / 2), int((self.height() - pm.height()) / 2), pm)
+
+
+class ImageViewer(QWidget):
+    """Full-size picture over the page; click anywhere to close."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.pm: QPixmap | None = None
+        self.hide()
+
+    def show_bytes(self, data: bytes) -> None:
+        pm = QPixmap()
+        if not pm.loadFromData(data):
+            return
+        self.pm = pm
+        self.setGeometry(self.parentWidget().rect())
+        self.raise_()
+        self.show()
+        anim.fade_slide_in(self, dx=0, dy=0, ms=180)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        self.hide()
+
+    def paintEvent(self, e):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.fillRect(self.rect(), qcolor("rgba(5,9,18,0.88)"))
+        if self.pm:
+            pm = self.pm.scaled(self.size() * 0.92, Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(int((self.width() - pm.width()) / 2), int((self.height() - pm.height()) / 2), pm)
+
+
+class DetailPanel(GlassCard):
+    """Right-hand mod page: header, install with dependencies, gallery, description."""
+
+    install_plan = Signal(object)
+    closed = Signal()
+
+    def __init__(self, ctx, kind: str, plan_fn, parent=None):
+        super().__init__(parent, radius=18)
+        from netlauncher.ui.richtext import RichText
+        self.ctx, self.kind, self.plan_fn = ctx, kind, plan_fn
+        self.project = None
+        self.plan = None
+        self._seq = 0
+        lay = vbox(self, (20, 18, 20, 18), 10)
+        head = hbox(None, (0, 0, 0, 0), 14)
+        self.icon = Icon(kind, 56)
+        head.addWidget(self.icon)
+        col = vbox(None, (0, 0, 0, 0), 2)
+        self.title = label("", 16, 650, display=True, wrap=True)
+        self.meta = label("", 9.5, role="faint", wrap=True)
+        col.addWidget(self.title)
+        col.addWidget(self.meta)
+        head.addLayout(col, 1)
+        close = GhostButton("Закрыть")
+        close.clicked.connect(self.closed.emit)
+        head.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(head)
+        brow = hbox(None, (0, 0, 0, 0), 8)
+        self.install_btn = AccentButton("Установить")
+        self.install_btn.clicked.connect(lambda: self.plan and self.install_plan.emit(self.plan))
+        self.site_btn = GhostButton("Открыть на сайте")
+        self.site_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._page)))
+        brow.addWidget(self.install_btn)
+        brow.addWidget(self.site_btn)
+        brow.addStretch(1)
+        lay.addLayout(brow)
+        self.deps = label("", 10, role="muted", wrap=True)
+        lay.addWidget(self.deps)
+        self.gallery_row = hbox(None, (0, 0, 0, 0), 8)
+        gal = QWidget()
+        gal.setLayout(self.gallery_row)
+        self.gallery = QScrollArea()
+        self.gallery.setWidget(gal)
+        self.gallery.setWidgetResizable(True)
+        self.gallery.setFixedHeight(116)
+        self.gallery.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.gallery.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        lay.addWidget(self.gallery)
+        self.body = RichText(ctx.http, ctx.lay.cache)
+        lay.addWidget(self.body, 1)
+        self.links = label("", 9.5, role="faint", wrap=True)
+        self.links.setOpenExternalLinks(True)
+        self.links.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        lay.addWidget(self.links)
+        self.thumbs: list[Thumb] = []
+        self._page = ""
+        self.viewer: ImageViewer | None = None
+
+    def show_project(self, project, provider) -> None:
+        self._seq += 1
+        seq = self._seq
+        self.project, self.plan = project, None
+        self.title.setText(project.title)
+        self.meta.setText(human_downloads(project.downloads))
+        self.deps.setText("Проверяю зависимости")
+        self.install_btn.setEnabled(False)
+        self.body.set_html(f"<p>{project.description}</p>")
+        for t in self.thumbs:
+            t.setParent(None)
+            t.deleteLater()
+        self.thumbs = []
+        self.gallery.hide()
+        self.links.setText("")
+        self.icon.pm = None
+        self.icon.update()
+        jobs.run(lambda progress: provider.details(project.id), on_done=lambda d: self._details(seq, d),
+                 on_error=lambda e: None)
+        jobs.run(lambda progress: self.plan_fn(project), on_done=lambda plan: self._planned(seq, plan),
+                 on_error=lambda e: self._plan_failed(seq, e))
+
+    def _details(self, seq: int, d) -> None:
+        if seq != self._seq:
+            return
+        parts = [x for x in (d.author, human_downloads(d.downloads), ", ".join(d.categories[:4])) if x]
+        self.meta.setText(", ".join(parts))
+        self._page = d.page_url
+        self.site_btn.setVisible(bool(d.page_url))
+        if d.body_format == "markdown":
+            self.body.set_markdown(d.body or d.summary)
+        else:
+            self.body.set_html(d.body or f"<p>{d.summary}</p>")
+        for url, title in d.gallery[:12]:
+            t = Thumb(url, title)
+            t.clicked.connect(self._open_image)
+            self.gallery_row.addWidget(t)
+            self.thumbs.append(t)
+            self._fetch(url, t.set_bytes)
+        self.gallery_row.addStretch(1)
+        self.gallery.setVisible(bool(self.thumbs))
+        if d.icon_url:
+            self._fetch(d.icon_url, self.icon.set_bytes)
+        self.links.setText("  ".join(f'<a href="{u}" style="color:#6AAEFF">{t}</a>' for t, u in d.links.items()))
+
+    def _planned(self, seq: int, plan) -> None:
+        if seq != self._seq:
+            return
+        self.plan = plan
+        deps = [p.title for p, _ in plan.items[1:]]
+        self.deps.setText("Вместе с ним установятся: " + ", ".join(deps) + "." if deps
+                          else "Дополнительные моды не нужны.")
+        self.install_btn.setEnabled(True)
+
+    def _plan_failed(self, seq: int, e) -> None:
+        if seq != self._seq:
+            return
+        if isinstance(e, AlreadyInstalled):
+            self.deps.setText("Уже установлен.")
+        elif isinstance(e, NotDistributable):
+            self.deps.setText("Автор запретил скачивание через сторонние программы. Скачай файл на сайте.")
+            self._page = e.page_url
+        elif isinstance(e, NotAvailable):
+            self.deps.setText("Для этой версии Minecraft нет подходящего файла.")
+        else:
+            self.deps.setText(_error_text(e))
+
+    def _fetch(self, url: str, cb) -> None:
+        dest = self.ctx.lay.cache / "icons" / hashlib.sha1(url.encode()).hexdigest()
+
+        def job(progress):
+            if not dest.exists():
+                self.ctx.http.download(url, dest)
+            return dest.read_bytes()
+
+        jobs.run(job, on_done=cb, on_error=lambda e: None)
+
+    def _open_image(self, url: str) -> None:
+        if self.viewer is None:
+            self.viewer = ImageViewer(self.window())
+        self._fetch(url, self.viewer.show_bytes)
+
+
+SORT_CHIPS = (("downloads", "Популярное"), ("relevance", "Подходящее"), ("newest", "Новое"), ("updated", "Обновлённое"))
+PAGE = 20
+
+
 class Browser(QWidget):
     back = Signal()
     install = Signal(object)
+    install_plan = Signal(object)
 
-    def __init__(self, ctx, kind: str, parent=None):
+    def __init__(self, ctx, kind: str, plan_fn=None, parent=None):
         super().__init__(parent)
         self.ctx, self.kind = ctx, kind
-        lay = vbox(self, (0, 0, 0, 0), 12)
+        lay = vbox(self, (0, 0, 0, 0), 10)
         top = hbox(None, (0, 0, 0, 0), 10)
         back = GhostButton("Назад к списку")
         back.clicked.connect(self.back.emit)
@@ -155,6 +377,21 @@ class Browser(QWidget):
             top.addWidget(c)
             self.source_chips[key] = c
         lay.addLayout(top)
+        filters = hbox(None, (0, 0, 0, 0), 8)
+        self.sort = "downloads"
+        self.sort_chips = {}
+        for key, text in SORT_CHIPS:
+            c = Chip(text, key == self.sort)
+            c.clicked.connect(lambda key=key: self.set_sort(key))
+            filters.addWidget(c)
+            self.sort_chips[key] = c
+        filters.addStretch(1)
+        self.category = QComboBox()
+        self.category.setMinimumWidth(200)
+        self.category.addItem("Все категории", "")
+        self.category.currentIndexChanged.connect(lambda _i: self.run_search())
+        filters.addWidget(self.category)
+        lay.addLayout(filters)
         srow = hbox(None, (0, 0, 0, 0), 10)
         self.status = label("", 10, role="muted", wrap=True)
         self.page_btn = GhostButton("Открыть страницу мода")
@@ -164,10 +401,22 @@ class Browser(QWidget):
         srow.addWidget(self.page_btn)
         lay.addLayout(srow)
         self._page_url = ""
+        body = hbox(None, (0, 0, 0, 0), 14)
         inner = QWidget()
         self.list = vbox(inner, (0, 0, 6, 0), 8)
+        self.more_btn = GhostButton("Показать ещё")
+        self.more_btn.clicked.connect(self.load_more)
+        self.more_btn.hide()
+        self.list.addWidget(self.more_btn)
         self.list.addStretch(1)
-        lay.addWidget(_scroll(inner), 1)
+        body.addWidget(_scroll(inner), 1)
+        self.detail = DetailPanel(ctx, kind, plan_fn or (lambda project: None))
+        self.detail.closed.connect(self.close_detail)
+        self.detail.install_plan.connect(self.install_plan.emit)
+        self.detail.setMinimumWidth(420)
+        self.detail.hide()
+        body.addWidget(self.detail, 1)
+        lay.addLayout(body, 1)
         self.cards: list[ResultCard] = []
         self.debounce = QTimer(self)
         self.debounce.setSingleShot(True)
@@ -175,6 +424,8 @@ class Browser(QWidget):
         self.debounce.timeout.connect(self.run_search)
         self.query.textChanged.connect(lambda _: self.debounce.start())
         self._seq = 0
+        self._offset = 0
+        self._cats_for = None
 
     def provider(self):
         if self.source == "curseforge":
@@ -189,45 +440,84 @@ class Browser(QWidget):
         for k, c in self.source_chips.items():
             c.active = k == key
             c.update()
+        self.query.setPlaceholderText("Поиск на CurseForge" if key == "curseforge" else "Поиск на Modrinth")
+        self._load_categories()
+        self.run_search()
+
+    def set_sort(self, key: str) -> None:
+        self.sort = key
+        for k, c in self.sort_chips.items():
+            c.active = k == key
+            c.update()
         self.run_search()
 
     def show_page_link(self, url: str) -> None:
         self._page_url = url
         self.page_btn.setVisible(bool(url))
 
-    def run_search(self) -> None:
+    def _load_categories(self) -> None:
+        if self._cats_for == self.source:
+            return
+        self._cats_for = self.source
+        prov, kind = self.provider(), self.kind
+        jobs.run(lambda progress: prov.categories(PROJECT_TYPES[kind]), on_done=self._set_categories,
+                 on_error=lambda e: None)
+
+    def _set_categories(self, cats) -> None:
+        self.category.blockSignals(True)
+        self.category.clear()
+        self.category.addItem("Все категории", "")
+        for slug, name in cats:
+            self.category.addItem(name, slug)
+        self.category.blockSignals(False)
+
+    def run_search(self, append: bool = False) -> None:
         lp = common.current_pack(self.ctx)
         if lp is None:
             return
+        self._load_categories()
         self._seq += 1
         seq = self._seq
+        if not append:
+            self._offset = 0
+        offset = self._offset
         q = self.query.text().strip()
+        sort = self.sort if (q or self.sort != "relevance") else "downloads"
+        cat = self.category.currentData() or None
         self.status.setText("Ищу")
         self.show_page_link("")
-        loader = search_loader(self.kind, lp.loader)
-        if self.source == "curseforge":
-            loader = lp.loader
+        loader = lp.loader if self.source == "curseforge" else search_loader(self.kind, lp.loader)
         prov = self.provider()
-        jobs.run(lambda progress: prov.search(q, PROJECT_TYPES[self.kind], lp.mc_version, loader),
-                 on_done=lambda hits: self._show(seq, hits),
+        jobs.run(lambda progress: prov.search(q, PROJECT_TYPES[self.kind], lp.mc_version, loader, offset=offset,
+                                              limit=PAGE, sort=sort, category=cat),
+                 on_done=lambda hits: self._show(seq, hits, append),
                  on_error=lambda e: self.status.setText(_error_text(e)))
 
-    def _show(self, seq: int, hits) -> None:
+    def load_more(self) -> None:
+        self._offset += PAGE
+        self.run_search(append=True)
+
+    def _show(self, seq: int, hits, append: bool = False) -> None:
         if seq != self._seq:
             return
-        for c in self.cards:
-            c.setParent(None)
-            c.deleteLater()
-        self.cards = []
-        self.status.setText("" if hits else "Ничего не нашлось. Попробуй другое слово.")
+        if not append:
+            for c in self.cards:
+                c.setParent(None)
+                c.deleteLater()
+            self.cards = []
+        new = []
         for proj in hits:
             card = ResultCard(proj, self.kind)
             card.install.connect(self.install.emit)
-            self.list.insertWidget(self.list.count() - 1, card)
+            card.selected.connect(self.open_detail)
+            self.list.insertWidget(self.list.indexOf(self.more_btn), card)
             self.cards.append(card)
+            new.append(card)
             if proj.icon_url:
                 self._icon(card, proj.icon_url)
-        anim.stagger(self.cards)
+        self.status.setText("" if self.cards else "Ничего не нашлось. Попробуй другое слово или категорию.")
+        self.more_btn.setVisible(len(hits) == PAGE)
+        anim.stagger(new)
 
     def _icon(self, card: ResultCard, url: str) -> None:
         dest = self.ctx.lay.cache / "icons" / hashlib.sha1(url.encode()).hexdigest()
@@ -237,8 +527,23 @@ class Browser(QWidget):
                 self.ctx.http.download(url, dest)
             return dest.read_bytes()
 
-        jobs.run(fetch, on_done=lambda data: card.icon.set_bytes(data) if not card.isHidden() else None,
+        jobs.run(fetch, on_done=lambda data: card.icon.set_bytes(data) if shiboken_alive(card) else None,
                  on_error=lambda e: None)
+
+    def open_detail(self, project) -> None:
+        was_hidden = self.detail.isHidden()
+        self.detail.show()
+        self.detail.show_project(project, self.provider())
+        if was_hidden:
+            anim.fade_slide_in(self.detail, dx=30, ms=240)
+
+    def close_detail(self) -> None:
+        self.detail.hide()
+
+
+def shiboken_alive(obj) -> bool:
+    import shiboken6
+    return shiboken6.isValid(obj)
 
 
 class ContentPage(QWidget):
@@ -291,9 +596,10 @@ class ContentPage(QWidget):
         ll.addWidget(_scroll(inner), 1)
         self.stack.addWidget(listing)
         self.listing = listing
-        self.browser = Browser(ctx, kind)
+        self.browser = Browser(ctx, kind, plan_fn=self._plan_for)
         self.browser.back.connect(self.close_browser)
         self.browser.install.connect(self.install)
+        self.browser.install_plan.connect(self._install_planned)
         self.stack.addWidget(self.browser)
 
     # ---------- data ----------
@@ -396,6 +702,25 @@ class ContentPage(QWidget):
         self.stack.setCurrentWidget(self.listing)
         self.find_btn.show()
         self.reload()
+
+    def _plan_for(self, project):
+        lib = self.library()
+        if lib is None:
+            raise NotAvailable(project.title)
+        return lib.plan_install(project.id, self.kind, source=self.browser.provider())
+
+    def _install_planned(self, plan) -> None:
+        lib = self.library()
+        if lib is None or not plan.items:
+            return
+        names = [p.title for p, _ in plan.items]
+        self.browser.detail.install_btn.setEnabled(False)
+        self.browser.detail.deps.setText(f"Устанавливаю {names[0]}")
+        jobs.run(lambda progress: lib.install(plan, self.kind, progress),
+                 on_done=lambda items: self.browser.detail.deps.setText(f"Установлено: {', '.join(names)}."),
+                 on_error=lambda e: self.browser.detail.deps.setText(_error_text(e)),
+                 on_progress=lambda name, cur, mx: self.browser.detail.deps.setText(
+                     f"Скачиваю {name}" + (f", {round(100 * cur / mx)} %" if mx else "")))
 
     def install(self, project) -> None:
         lib = self.library()
