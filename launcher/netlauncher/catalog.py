@@ -34,6 +34,7 @@ class Catalog:
     launcher_version: str
     launcher_urls: dict[str, str]
     packs: list[PackEntry] = field(default_factory=list)
+    friends_url: str = ""
 
     def get(self, pack_id: str) -> PackEntry | None:
         return next((p for p in self.packs if p.id == pack_id), None)
@@ -50,12 +51,17 @@ def parse(raw: dict) -> Catalog:
             packs.append(PackEntry(**{k: str(v) for k, v in p.items() if k in _ENTRY_FIELDS}))
         except TypeError:
             continue
-    return Catalog(str(launcher.get("version", "")), dict(launcher.get("urls") or {}), packs)
+    friends = raw.get("friends") or {}
+    return Catalog(str(launcher.get("version", "")), dict(launcher.get("urls") or {}), packs,
+                   str(friends.get("url", "")) if isinstance(friends, dict) else "")
 
 
 def to_json(cat: Catalog) -> dict:
-    return {"format": 1, "launcher": {"version": cat.launcher_version, "urls": cat.launcher_urls},
-            "packs": [vars(p) for p in cat.packs]}
+    out = {"format": 1, "launcher": {"version": cat.launcher_version, "urls": cat.launcher_urls},
+           "packs": [vars(p) for p in cat.packs]}
+    if cat.friends_url:
+        out["friends"] = {"url": cat.friends_url}
+    return out
 
 
 def contents_url(repo: str) -> str:

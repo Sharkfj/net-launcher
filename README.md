@@ -25,6 +25,17 @@ The launcher interface is in Russian for now; the button names below are transla
 Pack updates arrive on their own: on start the launcher shows "Version … is out" with an "Update" button.
 Updates never touch your worlds, settings or the mods you added yourself.
 
+### What the launcher does
+
+- Packs from the catalog install and update themselves; worlds, settings and your own mods stay untouched.
+- Your own packs: pick a Minecraft version and a loader (Fabric, Forge, NeoForge, Quilt) or none at all.
+- Mods, resource packs and shaders from Modrinth or CurseForge: sort by popular, relevant, new or updated,
+  filter by category, open a mod page with its description, pictures and GIFs. Required dependencies install
+  together with the mod.
+- Friends: requests, online status, invites and "Play together" (needs the friends service, see `server/`).
+- 3D player model with your Ely.by skin and a skin preview before uploading it to Ely.by.
+- Snapshots before every change, one-click rollback. Glass or solid theme.
+
 ### Development
 
 ```bash
@@ -57,6 +68,17 @@ Fonts Unbounded and Onest are under the SIL Open Font License (`launcher/netlaun
 
 Обновления сборки приходят сами: при запуске лаунчер покажет «Вышла версия …» и кнопку «Обновить».
 Миры, настройки и свои моды при обновлении не трогаются.
+
+### Что умеет лаунчер
+
+- Сборки из каталога ставятся и обновляются сами; миры, настройки и свои моды не трогаются.
+- Свои сборки: выбираешь версию Minecraft и загрузчик (Fabric, Forge, NeoForge, Quilt) или без модов.
+- Моды, ресурспаки и шейдеры с Modrinth или CurseForge: сортировка «популярное», «подходящее», «новое»,
+  «обновлённое», фильтр по категориям, страница мода с описанием, картинками и гифками. Обязательные
+  зависимости ставятся вместе с модом.
+- Друзья: заявки, статус «в сети», приглашения и «Играть вместе» (нужна служба друзей, см. `server/`).
+- 3D-модель игрока со скином Ely.by и предпросмотр скина перед загрузкой на Ely.by.
+- Снимки перед каждым изменением и откат одной кнопкой. Тема «стекло» или «сплошная».
 
 ### Для разработки
 

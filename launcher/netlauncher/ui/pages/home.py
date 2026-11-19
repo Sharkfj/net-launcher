@@ -874,6 +874,7 @@ class HomePage(QWidget):
 
     def _catalog_loaded(self, cat: Catalog | None) -> None:
         self.catalog = cat
+        self.ctx.catalog = cat
         if self.mode() in ("pack", "empty"):
             self.refresh()
 
@@ -1034,6 +1035,8 @@ class HomePage(QWidget):
         self._last_line_at = time.time()
         self._hidden_for_game = False
         self.panel.status.setText("Запускаю игру")
+        if self.window is not None:
+            self.window.game_status = ("playing", lp.name, server or "")
         self.timer.start()
 
     def _poll(self) -> None:
@@ -1086,6 +1089,8 @@ class HomePage(QWidget):
     def _finished(self, code: int) -> None:
         self.timer.stop()
         self.proc = None
+        if self.window is not None:
+            self.window.game_status = ("launcher", "", "")
         self._set_playing(False)
         self.panel.bar.set_fraction(0)
         self.panel.percent.setText("")

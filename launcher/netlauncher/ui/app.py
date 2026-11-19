@@ -31,9 +31,18 @@ class AppContext:
     auth: ElyAuth
     accounts: AccountStore
     installer: GameInstaller
+    catalog: object = None
 
     def save(self) -> None:
         save_settings(self.lay.settings_file, self.settings)
+
+    def friends_url(self) -> str:
+        return self.settings.friends_url or (getattr(self.catalog, "friends_url", "") if self.catalog else "")
+
+    def friends(self):
+        from netlauncher.friends import FriendsClient
+        return FriendsClient(self.http, self.friends_url(), self.lay.root / "friends-session.json",
+                             self.accounts.load)
 
 
 def make_context(lay: Layout, http: Http) -> AppContext:

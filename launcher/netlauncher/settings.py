@@ -24,6 +24,7 @@ class Settings:
     curseforge_key: str = ""
     theme: str = "glass"  # "glass" (transparent, blurred) or "solid"
     first_run_done: bool = False
+    friends_url: str = ""
 
 
 def load_settings(path: Path) -> Settings:

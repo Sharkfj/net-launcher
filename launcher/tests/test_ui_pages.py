@@ -290,3 +290,79 @@ def test_mods_page_for_vanilla_pack(env):
     page = w.page("mods")
     assert page.subtitle.text() == "В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge."
     assert not page.find_btn.isVisibleTo(page)
+
+
+FBASE = "https://friends.example.net"
+
+
+def _friends_routes(http, state):
+    from netlauncher.friends import ELY_JOIN
+    http.routes.update({f"{FBASE}/v1/auth/challenge": {"server_id": "sid"}, ELY_JOIN: None,
+                        f"{FBASE}/v1/auth/verify": {"token": "S", "name": "Shark"},
+                        f"{FBASE}/v1/state": state, f"{FBASE}/v1/presence": state})
+    for p in ("friends/request", "friends/accept", "friends/decline", "friends/remove", "invite",
+              "invite/dismiss"):
+        http.routes[f"{FBASE}/v1/{p}"] = state
+
+
+STATE = {"me": "Shark", "friends": [
+    {"name": "Vasya", "online": True, "status": "playing", "pack": ".NET", "server": "play.example.net",
+     "last_seen": 1},
+    {"name": "Oleg", "online": False, "status": "", "pack": "", "server": "", "last_seen": 0}],
+    "incoming": ["Petya"], "outgoing": ["Masha"],
+    "invites": [{"from": "Vasya", "pack": ".NET", "server": "play.example.net", "created": 1}]}
+
+
+def test_friends_not_configured_hint(env):
+    w, ctx, gd, _ = env
+    w.open_page("friends")
+    page = w.page("friends")
+    assert page.notice.text().startswith("Сервер друзей не подключён.")
+
+
+def test_friends_list_requests_invites(env, monkeypatch):
+    w, ctx, gd, _ = env
+    ctx.settings.friends_url = FBASE
+    _friends_routes(ctx.http, STATE)
+    played = {}
+    monkeypatch.setattr(w.page("home"), "play", lambda world=None, server=None: played.setdefault("server", server))
+    w.open_page("friends")
+    page = w.page("friends")
+    pump(until=lambda: len(page.rows) == 2)
+    assert page.subtitle.text() == "1 в сети"
+    vasya, oleg = page.rows
+    assert vasya.status.text() == "Играет в .NET на play.example.net" and vasya.join_btn.isVisibleTo(vasya)
+    assert oleg.status.text() == "Не в сети" and not oleg.join_btn.isVisibleTo(oleg)
+    assert [r.name for r in page.request_rows] == ["Petya"] and page.outgoing.text() == "Ждут ответа: Masha"
+    page.request_rows[0].accept_btn.click()
+    pump(until=lambda: any(c.url.endswith("/friends/accept") for c in ctx.http.calls))
+    assert next(c for c in ctx.http.calls if c.url.endswith("/friends/accept")).body == {"name": "Petya"}
+    assert page.invite_rows[0].text.text() == "Vasya зовёт играть в .NET"
+    page.invite_rows[0].play_btn.click()
+    pump(until=lambda: "server" in played)
+    assert played["server"] == "play.example.net" and w.current_page() == "home"
+
+
+def test_add_friend_and_presence(env):
+    w, ctx, gd, _ = env
+    ctx.settings.friends_url = FBASE
+    _friends_routes(ctx.http, {**STATE, "friends": [], "incoming": [], "outgoing": [], "invites": []})
+    w.open_page("friends")
+    page = w.page("friends")
+    page.add_name.setText("Vasya")
+    page.add_btn.click()
+    pump(until=lambda: any(c.url.endswith("/friends/request") for c in ctx.http.calls))
+    assert next(c for c in ctx.http.calls if c.url.endswith("/friends/request")).body == {"name": "Vasya"}
+    w.game_status = ("playing", ".NET", "play.example.net")
+    page.tick()
+    pump(until=lambda: any(c.url.endswith("/v1/presence") for c in ctx.http.calls))
+    pres = [c for c in ctx.http.calls if c.url.endswith("/v1/presence")][-1]
+    assert pres.body == {"status": "playing", "pack": ".NET", "server": "play.example.net"}
+
+
+def test_friend_status_text():
+    from netlauncher.ui.pages.friends_page import status_text
+    import time as _t
+    assert status_text({"online": True, "status": "launcher"}) == "В сети, в лаунчере"
+    assert status_text({"online": True, "status": "playing", "pack": ".NET", "server": ""}) == "Играет в .NET"
+    assert status_text({"online": False, "last_seen": _t.time() - 7200}) == "Не в сети, был 2 ч назад"
