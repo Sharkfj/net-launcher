@@ -169,6 +169,7 @@ class MainWindow(QWidget):
         self.resize(1180, 720)
         self.setMinimumSize(980, 620)
         self.blurred = False
+        self.theme = getattr(ctx.settings, "theme", "glass") if ctx is not None else "glass"
         self._animating = 0
         self._opened = False
 
@@ -247,8 +248,15 @@ class MainWindow(QWidget):
 
     def _apply_blur(self):
         region = QRegion(self._shape().toFillPolygon().toPolygon())
-        self.blurred = blur.enable(self, region)
+        self.blurred = blur.enable(self, region, on=self.theme != "solid")
         self.update()
+
+    def set_theme(self, theme: str) -> None:
+        self.theme = "solid" if theme == "solid" else "glass"
+        if self.isVisible():
+            self._apply_blur()
+        else:
+            self.blurred = False
 
     def paintEvent(self, e):  # noqa: N802
         p = QPainter(self)
