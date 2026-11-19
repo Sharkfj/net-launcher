@@ -328,6 +328,11 @@ class MainWindow(QWidget):
     def set_account(self, acc) -> None:
         self.sidebar.account.setText(acc.name if acc else "Не вошёл")
         self.sidebar.avatar.set_name(acc.name if acc else "?")
+        if acc is None:
+            self.sidebar.avatar.set_face(None)
+
+    def set_face(self, img) -> None:
+        self.sidebar.avatar.set_face(img)
 
     # ---------- tray ----------
     def _setup_tray(self):

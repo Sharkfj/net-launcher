@@ -197,3 +197,29 @@ def test_empty_state_offers_catalog_and_import(make, monkeypatch, tmp_path):
     assert page.mode() == "empty"
     assert [b.text() for b in page.empty.catalog_buttons] == ["Установить"]
     assert [b.text() for b in page.empty.import_buttons] == ["Перенести «1.21.1»"]
+
+
+def test_home_loads_skin_into_model_and_avatar(make):
+    from netlauncher import skin
+    from tests.test_skin import _two_tone_png
+    png = _two_tone_png()
+    http = FakeHttp({f"{AUTH}/validate": None,
+                     skin.TEXTURES.format(name="Shark"): {"SKIN": {"url": "http://ely.by/s.png",
+                                                                   "metadata": {"model": "slim"}}}},
+                    downloads={"http://ely.by/s.png": png})
+    w, page, ctx = make(http=http)
+    pump(until=lambda: page.panel.model.skin_png == png)
+    assert page.panel.model.skin_png == png and page.panel.model.slim
+    assert w.sidebar.avatar.has_face()
+
+
+def test_progress_bar_hidden_when_idle(make, monkeypatch):
+    w, page, ctx = make()
+    assert not page.panel.bar.isVisibleTo(page.panel)
+    procs = _ready_game(monkeypatch, page)
+    page.play()
+    assert page.panel.bar.isVisibleTo(page.panel)
+    pump(until=lambda: bool(procs) and procs[0].cmd is not None)
+    procs[0].code = 0
+    pump(until=lambda: page.panel.play_btn.isEnabled())
+    assert not page.panel.bar.isVisibleTo(page.panel)
