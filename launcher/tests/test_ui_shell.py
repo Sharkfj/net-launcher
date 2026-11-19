@@ -162,3 +162,11 @@ def test_stagger_keeps_layout_positions(qapp):
     ys = [r.y() for r in rows]
     assert ys == sorted(ys) and len(set(ys)) == 5
     assert all(r.graphicsEffect() is None for r in rows)
+
+
+def test_job_result_after_signals_deleted_does_not_raise(qapp):
+    from netlauncher.ui import jobs
+    job = jobs.Job(lambda progress: 1, ())
+    import shiboken6
+    shiboken6.delete(job.signals)
+    job.run()  # must not raise "Signal source has been deleted"

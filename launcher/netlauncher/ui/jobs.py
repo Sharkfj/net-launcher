@@ -23,14 +23,20 @@ class Job(QRunnable):
         self.fn, self.args = fn, args
         self.signals = _Signals()
 
+    def _emit(self, name: str, *args) -> None:
+        try:
+            getattr(self.signals, name).emit(*args)
+        except RuntimeError:
+            pass  # the app is closing and the receiver is gone
+
     def run(self) -> None:
         try:
-            result = self.fn(*self.args, self.signals.progress.emit)
+            result = self.fn(*self.args, lambda *a: self._emit("progress", *a))
         except BaseException as e:  # noqa: BLE001 - surfaced to the UI
             e.__traceback_text__ = traceback.format_exc()
-            self.signals.error.emit(e)
+            self._emit("error", e)
         else:
-            self.signals.done.emit(result)
+            self._emit("done", result)
 
 
 def run(fn: Callable[..., Any], *args, on_done: Callable[[Any], None] | None = None,

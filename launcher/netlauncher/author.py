@@ -79,7 +79,7 @@ def _slot(path: str, project: str) -> str:
     return project or path
 
 
-def _diff(new: PackIndex, overrides: list[str], prev: PackIndex | None) -> PackDiff:
+def _diff(new: PackIndex, overrides: list[str], prev: PackIndex | None, prev_overrides: list[str]) -> PackDiff:
     def slots(files, extra):
         d = {_slot(f.path, f.project): f for f in files}
         for rel in extra:
@@ -89,7 +89,8 @@ def _diff(new: PackIndex, overrides: list[str], prev: PackIndex | None) -> PackD
 
     new_mods = [o for o in overrides if o.startswith("mods/")] + [m.path for m in new.manual]
     cur = slots(new.files, new_mods)
-    old = slots(prev.files, [m.path for m in prev.manual]) if prev else {}
+    old_mods = [o for o in prev_overrides if o.startswith("mods/")]
+    old = slots(prev.files, [m.path for m in prev.manual] + old_mods) if prev else {}
     name = lambda k, f: Path(f.path if f else k).name  # noqa: E731
     diff = PackDiff()
     for k, f in cur.items():
@@ -104,8 +105,13 @@ def _diff(new: PackIndex, overrides: list[str], prev: PackIndex | None) -> PackD
 
 
 def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_version: str, loader: str,
-          loader_version: str, changelog: str, prev: PackIndex | None, cf=None) -> BuildResult:
+          loader_version: str, changelog: str, prev=None, cf=None) -> BuildResult:
+    """`prev` is the previous MrPack (or just its PackIndex) for the change summary."""
     game_dir = Path(game_dir)
+    prev_overrides: list[str] = []
+    if prev is not None and hasattr(prev, "index"):
+        prev_overrides = prev.override_paths()
+        prev = prev.index
     content = _content_files(game_dir)
     hashes = {rel: sha1_file(game_dir / rel) for rel in content}
     found = modrinth.versions_by_hash(list(hashes.values()))
@@ -158,7 +164,7 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
     overrides += [f for f in OVERRIDE_FILES if (game_dir / f).is_file()]
     index = PackIndex(name, version, mc_version, loader, loader_version, files, manual,
                       list(prev.preserve) if prev else [], changelog)
-    return BuildResult(index, sorted(set(overrides)), warnings, _diff(index, overrides, prev))
+    return BuildResult(index, sorted(set(overrides)), warnings, _diff(index, overrides, prev, prev_overrides))
 
 
 def write(result: BuildResult, game_dir: Path, dest_dir: Path, pack_id: str) -> Path:

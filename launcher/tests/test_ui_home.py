@@ -261,3 +261,19 @@ def test_first_run_theme_choice(qapp, home, monkeypatch):
     from netlauncher.settings import load_settings
     assert load_settings(ctx.lay.settings_file).theme == "solid"
     anim.set_enabled(True)
+
+
+def test_update_snapshot_lands_in_pack_snapshots(make, home, monkeypatch, tmp_path):
+    from netlauncher import pack as packmod
+    seen = {}
+    monkeypatch.setattr("netlauncher.ui.pages.home.apply_update",
+                        lambda plan, pk, gd, http, cache, snaps, progress=None: seen.setdefault("snaps", snaps))
+    monkeypatch.setattr("netlauncher.ui.pages.home.MrPack", type("P", (), {"open": staticmethod(
+        lambda p: type("X", (), {"index": None})())}))
+    monkeypatch.setattr("netlauncher.ui.pages.home.plan_update", lambda pk, gd, st: type("U", (), {"manual_missing": []})())
+    w, page, ctx = make()
+    monkeypatch.setattr(ctx.http, "download", lambda url, dest, sha1=None, sha512=None, progress=None: dest, raising=False)
+    monkeypatch.setattr(ctx.installer, "ensure", lambda *a, **k: None)
+    entry = PackEntry("net", ".NET", "", "0.2", "1.21.1", "neoforge", "21.1.267", "https://x/net.mrpack", "")
+    page._install_job(entry, lambda *a: None)
+    assert seen["snaps"] == ctx.lay.snapshots / "net"

@@ -226,3 +226,12 @@ def test_server_only_mods_still_installed_on_client(tmp_path):
     res = author.build(gd, mr, ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", "", None)
     [f] = res.index.files
     assert f.client == "optional" and f.server == "required"
+
+
+def test_build_diff_counts_previous_overrides(tmp_path):
+    gd = tmp_path / "сборка"
+    mr, _ = _mr_world(gd)
+    first = author.build(gd, mr, ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", "", None)
+    p = author.write(first, gd, tmp_path / "out", "net")
+    again = author.build(gd, mr, ".NET", "0.2", "1.21.1", "neoforge", "21.1.267", "", MrPack.open(p))
+    assert again.diff.added == [] and again.diff.removed == [] and again.diff.updated == []

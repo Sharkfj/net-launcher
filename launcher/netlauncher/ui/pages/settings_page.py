@@ -312,7 +312,7 @@ class SettingsPage(QWidget):
     def _prev_index(self, pack_id: str):
         built = sorted(self._author_dir().glob(f"{pack_id}-*.mrpack"), key=lambda p: p.stat().st_mtime)
         try:
-            return MrPack.open(built[-1]).index if built else None
+            return MrPack.open(built[-1]) if built else None
         except Exception:  # noqa: BLE001 - a broken old build just means "no previous version"
             return None
 
