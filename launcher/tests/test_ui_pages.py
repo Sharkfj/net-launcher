@@ -172,3 +172,21 @@ def test_settings_fields_wide_and_ram_hint_matches(env, monkeypatch):
         assert f.minimumWidth() >= 320
     from netlauncher.ui.pages.settings_page import gb_text
     assert gb_text(7680) == "7,5 ГБ" and gb_text(8192) == "8 ГБ"
+
+
+def test_browser_source_switch_requires_key(env, monkeypatch):
+    w, ctx, gd, _ = env
+    w.open_page("mods")
+    page = w.page("mods")
+    page.open_browser()
+    page.browser.set_source("curseforge")
+    assert page.browser.source == "modrinth"
+    assert page.browser.status.text() == "Чтобы искать на CurseForge, добавь ключ API в настройках, раздел «Лаунчер»."
+    ctx.settings.curseforge_key = "KEY"
+    from netlauncher.curseforge import API as CF
+    ctx.http.routes[f"{CF}/mods/search"] = {"data": [{"id": 7, "name": "Chromeware", "slug": "c", "summary": "s",
+                                                     "downloadCount": 1500, "logo": None, "links": {}}]}
+    page.browser.set_source("curseforge")
+    assert page.browser.source == "curseforge"
+    pump(until=lambda: len(page.browser.cards) == 1)
+    assert page.browser.cards[0].title.text() == "Chromeware" and page.browser.cards[0].meta.text() == "2 тыс. загрузок"

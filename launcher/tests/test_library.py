@@ -171,3 +171,39 @@ def test_check_updates_ignores_pack_items(w):
     w.updates[sha1(CLOTH)] = _ver("cloth-config", "cloth-16", NEWLIB, date="2026-09-01")
     state = {"mods/cloth.jar": {"sha1": sha1(CLOTH), "client": "required", "server": "unsupported"}}
     assert w.lib(state).check_updates("mod") == []
+
+
+class FakeSource:
+    """Duck-typed second source (like CurseForge) with "cf:" ids."""
+
+    def __init__(self, versions, projects):
+        self.v, self.p = versions, projects
+
+    def best_version(self, pid, gv, loader):
+        from netlauncher.modrinth import _version
+        return _version(self.v[pid]) if pid in self.v else None
+
+    def projects(self, ids):
+        from netlauncher.modrinth import _project
+        return {i: _project(self.p[i]) for i in ids if i in self.p}
+
+
+def test_install_from_other_source(w):
+    v = _ver("cf:5", "shoulder-cf", SHOULDER)
+    src = FakeSource({"cf:5": v}, {"cf:5": {**_proj("cf:5"), "title": "Shoulder"}})
+    w.serve(v, SHOULDER)
+    lib = w.lib()
+    plan = lib.plan_install("cf:5", "mod", source=src)
+    [item] = lib.install(plan, "mod")
+    assert item.path.name == "shoulder-cf.jar" and item.path.read_bytes() == SHOULDER
+
+
+def test_install_root_dup_modid_raises(w):
+    w.installed("cloth.jar", CLOTH)
+    v = _ver("cf:9", "cloth-cf", CLOTH)
+    src = FakeSource({"cf:9": v}, {"cf:9": {**_proj("cf:9"), "title": "Cloth"}})
+    w.serve(v, CLOTH)
+    lib = w.lib()
+    with pytest.raises(AlreadyInstalled):
+        lib.install(lib.plan_install("cf:9", "mod", source=src), "mod")
+    assert sorted(p.name for p in (w.gd / "mods").iterdir()) == ["cloth.jar"]

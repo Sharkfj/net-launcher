@@ -21,6 +21,7 @@ class Settings:
     last_world: str = ""
     source_instance: str = ""
     selected_pack: str = "net"
+    curseforge_key: str = ""
 
 
 def load_settings(path: Path) -> Settings:

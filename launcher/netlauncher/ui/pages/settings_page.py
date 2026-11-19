@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QComboBox, QLineEdit, QPlainTextEdit, QScrollArea,
 
 from netlauncher import __version__, author, localpacks
 from netlauncher.catalog import PackEntry
+from netlauncher.curseforge import CurseForge
 from netlauncher.pack import MrPack
 from netlauncher.settings import recommended_ram_mb
 from netlauncher.ui import anim, jobs
@@ -109,6 +110,13 @@ class SettingsPage(QWidget):
         self.animations._set_knob(1.0 if s.animations else 0.0)
         self.animations.toggled.connect(self._animations)
         lc.addWidget(_line("Анимации", self.animations, "Плавные переходы и движения фигуры."))
+        self.cf_key = QLineEdit(s.curseforge_key)
+        self.cf_key.setPlaceholderText("Ключ CurseForge API")
+        self.cf_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.cf_key.setMinimumWidth(340)
+        self.cf_key.editingFinished.connect(self._save_cf)
+        lc.addWidget(_line("CurseForge", self.cf_key,
+                           "Нужен для поиска модов на CurseForge. Бесплатный ключ выдают на console.curseforge.com."))
         btns = hbox(None, (0, 4, 0, 0), 8)
         open_dir = GhostButton("Открыть папку игры")
         open_dir.clicked.connect(self._open_game_dir)
@@ -212,6 +220,10 @@ class SettingsPage(QWidget):
         anim.set_enabled(on)
         self.ctx.save()
 
+    def _save_cf(self) -> None:
+        self.ctx.settings.curseforge_key = self.cf_key.text().strip()
+        self.ctx.save()
+
     def _open_game_dir(self) -> None:
         lp = common.current_pack(self.ctx)
         d = localpacks.game_dir(self.ctx.lay, lp.id) if lp else self.ctx.lay.instances
@@ -301,8 +313,10 @@ class SettingsPage(QWidget):
         prev = self._prev_index(lp.id)
 
         def job(progress):
+            cf = CurseForge(self.ctx.http, self.ctx.settings.curseforge_key) if self.ctx.settings.curseforge_key \
+                else None
             res = author.build(gd, self.ctx.modrinth, lp.name, version, lp.mc_version, lp.loader, lp.loader_version,
-                               changelog, prev)
+                               changelog, prev, cf=cf)
             path = author.write(res, gd, self._author_dir(), lp.id)
             return res, path
 

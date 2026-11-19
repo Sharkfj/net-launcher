@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
 
 from netlauncher import localpacks
+from netlauncher.curseforge import CurseForge, NotDistributable
 from netlauncher.library import AlreadyInstalled, Library, Locked, NotAvailable
 from netlauncher.modrinth import search_loader
 from netlauncher.pack import load_state
@@ -145,9 +147,23 @@ class Browser(QWidget):
         self.query.setPlaceholderText("Поиск на Modrinth")
         top.addWidget(back)
         top.addWidget(self.query, 1)
+        self.source = "modrinth"
+        self.source_chips = {}
+        for key, text in (("modrinth", "Modrinth"), ("curseforge", "CurseForge")):
+            c = Chip(text, key == "modrinth")
+            c.clicked.connect(lambda key=key: self.set_source(key))
+            top.addWidget(c)
+            self.source_chips[key] = c
         lay.addLayout(top)
-        self.status = label("", 10, role="muted")
-        lay.addWidget(self.status)
+        srow = hbox(None, (0, 0, 0, 0), 10)
+        self.status = label("", 10, role="muted", wrap=True)
+        self.page_btn = GhostButton("Открыть страницу мода")
+        self.page_btn.hide()
+        self.page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._page_url)))
+        srow.addWidget(self.status, 1)
+        srow.addWidget(self.page_btn)
+        lay.addLayout(srow)
+        self._page_url = ""
         inner = QWidget()
         self.list = vbox(inner, (0, 0, 6, 0), 8)
         self.list.addStretch(1)
@@ -160,6 +176,25 @@ class Browser(QWidget):
         self.query.textChanged.connect(lambda _: self.debounce.start())
         self._seq = 0
 
+    def provider(self):
+        if self.source == "curseforge":
+            return CurseForge(self.ctx.http, self.ctx.settings.curseforge_key)
+        return self.ctx.modrinth
+
+    def set_source(self, key: str) -> None:
+        if key == "curseforge" and not self.ctx.settings.curseforge_key:
+            self.status.setText("Чтобы искать на CurseForge, добавь ключ API в настройках, раздел «Лаунчер».")
+            return
+        self.source = key
+        for k, c in self.source_chips.items():
+            c.active = k == key
+            c.update()
+        self.run_search()
+
+    def show_page_link(self, url: str) -> None:
+        self._page_url = url
+        self.page_btn.setVisible(bool(url))
+
     def run_search(self) -> None:
         lp = common.current_pack(self.ctx)
         if lp is None:
@@ -168,8 +203,12 @@ class Browser(QWidget):
         seq = self._seq
         q = self.query.text().strip()
         self.status.setText("Ищу")
+        self.show_page_link("")
         loader = search_loader(self.kind, lp.loader)
-        jobs.run(lambda progress: self.ctx.modrinth.search(q, PROJECT_TYPES[self.kind], lp.mc_version, loader),
+        if self.source == "curseforge":
+            loader = lp.loader
+        prov = self.provider()
+        jobs.run(lambda progress: prov.search(q, PROJECT_TYPES[self.kind], lp.mc_version, loader),
                  on_done=lambda hits: self._show(seq, hits),
                  on_error=lambda e: self.status.setText(_error_text(e)))
 
@@ -363,7 +402,9 @@ class ContentPage(QWidget):
         if lib is None:
             return
         self.browser.status.setText(f"Проверяю {project.title}")
-        jobs.run(lambda progress: lib.plan_install(project.id, self.kind),
+        self.browser.show_page_link("")
+        source = self.browser.provider()
+        jobs.run(lambda progress: lib.plan_install(project.id, self.kind, source=source),
                  on_done=lambda plan: self._confirm_install(lib, plan), on_error=self._install_failed)
 
     def _confirm_install(self, lib: Library, plan) -> None:
@@ -382,7 +423,11 @@ class ContentPage(QWidget):
                      f"Скачиваю {name}" + (f", {round(100 * cur / mx)} %" if mx else "")))
 
     def _install_failed(self, e: BaseException) -> None:
-        if isinstance(e, AlreadyInstalled):
+        if isinstance(e, NotDistributable):
+            self.browser.status.setText(f"{e.name}: автор запретил скачивание через сторонние программы. "
+                                        "Скачай файл на странице мода и положи в папку mods.")
+            self.browser.show_page_link(e.page_url)
+        elif isinstance(e, AlreadyInstalled):
             self.browser.status.setText(f"{e.name} уже установлен.")
         elif isinstance(e, NotAvailable):
             self.browser.status.setText("Для этой версии Minecraft нет подходящего файла.")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -103,7 +104,7 @@ def _diff(new: PackIndex, overrides: list[str], prev: PackIndex | None) -> PackD
 
 
 def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_version: str, loader: str,
-          loader_version: str, changelog: str, prev: PackIndex | None) -> BuildResult:
+          loader_version: str, changelog: str, prev: PackIndex | None, cf=None) -> BuildResult:
     game_dir = Path(game_dir)
     content = _content_files(game_dir)
     hashes = {rel: sha1_file(game_dir / rel) for rel in content}
@@ -113,8 +114,22 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
     manual: list[ManualFile] = []
     overrides: list[str] = []
     warnings: list[str] = []
+    cf_hits: dict = {}
+    if cf is not None:
+        rest = [game_dir / rel for rel in content if hashes[rel] not in found]
+        cf_hits = {p.relative_to(game_dir).as_posix(): hit for p, hit in cf.match_files(rest).items()}
     for rel in content:
         digest = hashes[rel]
+        if rel in cf_hits:
+            mod, f = cf_hits[rel]
+            path = game_dir / rel
+            if f.get("downloadUrl"):
+                files.append(PackFile(rel, digest, hashlib.sha512(path.read_bytes()).hexdigest(), path.stat().st_size,
+                                      [f["downloadUrl"]]))
+            else:
+                manual.append(ManualFile(rel, digest, mod.get("name", rel), cf.page(mod, f.get("id"))))
+                warnings.append(f"{mod.get('name', rel)}: автор запретил перезалив, игроки скачают вручную")
+            continue
         v = found.get(digest)
         if v:
             f = next((x for x in v.files if x.sha1 == digest), v.primary_file)
