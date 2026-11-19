@@ -366,3 +366,14 @@ def test_friend_status_text():
     assert status_text({"online": True, "status": "launcher"}) == "В сети, в лаунчере"
     assert status_text({"online": True, "status": "playing", "pack": ".NET", "server": ""}) == "Играет в .NET"
     assert status_text({"online": False, "last_seen": _t.time() - 7200}) == "Не в сети, был 2 ч назад"
+
+
+def test_richtext_protocol_relative_image(qapp, home):
+    from netlauncher.ui.richtext import RichText
+    from tests.test_skin import _two_tone_png
+    http = FakeHttp(downloads={"https://media.forgecdn.net/a.png": _two_tone_png()})
+    rt = RichText(http, home.cache)
+    rt.show()
+    rt.set_html('<p>x <img src="//media.forgecdn.net/a.png"></p>')
+    pump(until=lambda: rt.loaded("https://media.forgecdn.net/a.png"))
+    assert rt.loaded("https://media.forgecdn.net/a.png")

@@ -64,6 +64,8 @@ class RichText(QTextBrowser):
         return img
 
     def loadResource(self, rtype, url: QUrl):  # noqa: N802
+        if rtype == QTextDocument.ResourceType.ImageResource and not url.scheme() and url.toString().startswith("//"):
+            url = QUrl("https:" + url.toString())
         if rtype == QTextDocument.ResourceType.ImageResource and url.scheme() in ("http", "https"):
             key = url.toString()
             if key in self._images:
