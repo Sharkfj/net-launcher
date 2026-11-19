@@ -41,3 +41,48 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     if 2 <= n10 <= 4 and not 12 <= n100 <= 14:
         return few
     return many
+
+
+MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
+          "ноября", "декабря"]
+
+
+def human_date(dt) -> str:
+    return f"{dt.day} {MONTHS[dt.month - 1]}, {dt:%H:%M}"
+
+
+def human_size(n: int) -> str:
+    if n >= 1 << 30:
+        return f"{n / (1 << 30):.1f} ГБ".replace(".", ",")
+    if n >= 1 << 20:
+        return f"{round(n / (1 << 20))} МБ"
+    return f"{max(1, round(n / 1024))} КБ"
+
+
+def human_downloads(n: int) -> str:
+    if n >= 10_000_000:
+        return f"{round(n / 1_000_000)} млн загрузок"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f} млн загрузок".replace(".", ",")
+    if n >= 1000:
+        return f"{round(n / 1000)} тыс. загрузок"
+    return f"{n} {plural(n, 'загрузка', 'загрузки', 'загрузок')}"
+
+
+def confirm(parent, title: str, text: str, ok: str) -> bool:
+    from PySide6.QtWidgets import QMessageBox
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    yes = box.addButton(ok, QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    return box.clickedButton() is yes
+
+
+def current_pack(ctx):
+    from netlauncher import localpacks
+    packs = localpacks.list_installed(ctx.lay)
+    if not packs:
+        return None
+    return next((p for p in packs if p.id == ctx.settings.selected_pack), packs[0])
