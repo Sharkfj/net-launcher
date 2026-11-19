@@ -280,3 +280,13 @@ def test_richtext_loads_remote_image(qapp, home):
     pump(until=lambda: rt.loaded("https://i/x.png"))
     img = rt.document().resource(QTextDocument.ResourceType.ImageResource, QUrl("https://i/x.png"))
     assert img is not None and not img.isNull()
+
+
+def test_mods_page_for_vanilla_pack(env):
+    w, ctx, gd, _ = env
+    localpacks.save(ctx.lay, LocalPack("vanilla", "Чистый", "0.0", "1.21.1", "vanilla", ""))
+    ctx.settings.selected_pack = "vanilla"
+    w.open_page("mods")
+    page = w.page("mods")
+    assert page.subtitle.text() == "В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge."
+    assert not page.find_btn.isVisibleTo(page)
