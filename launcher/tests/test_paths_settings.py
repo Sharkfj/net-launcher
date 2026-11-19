@@ -43,3 +43,10 @@ def test_settings_ignores_unknown_keys(home):
 @pytest.mark.parametrize("total,exp", [(8192, 4096), (16384, 8192), (32768, 8192), (4096, 3072), (12000, 5632)])
 def test_recommended_ram(total, exp):
     assert recommended_ram_mb(total) == exp
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
+def test_settings_file_private(home):
+    import os
+    save_settings(home.settings_file, Settings(github_token="ghp_secret", curseforge_key="cfkey"))
+    assert oct(os.stat(home.settings_file).st_mode & 0o777) == "0o600"
