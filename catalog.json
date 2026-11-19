@@ -1,10 +1,10 @@
 {
  "format": 1,
  "launcher": {
-  "version": "0.1.0",
+  "version": "0.2.2",
   "urls": {
-   "windows": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.1.0/NET-Launcher.exe",
-   "linux": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.1.0/NET-Launcher-linux.tar.gz"
+   "windows": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.2.2/NET-Launcher.exe",
+   "linux": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.2.2/NET-Launcher-linux.tar.gz"
   }
  },
  "packs": [
