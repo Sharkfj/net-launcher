@@ -223,3 +223,22 @@ def test_progress_bar_hidden_when_idle(make, monkeypatch):
     procs[0].code = 0
     pump(until=lambda: page.panel.play_btn.isEnabled())
     assert not page.panel.bar.isVisibleTo(page.panel)
+
+
+def test_skin_preview_from_file(make, tmp_path):
+    from tests.test_skin import _two_tone_png
+    w, page, ctx = make()
+    png = _two_tone_png()
+    f = tmp_path / "мой скин.png"
+    f.write_bytes(png)
+    assert not page.panel.skin_bar.isVisibleTo(page.panel)
+    page.preview_skin(f)
+    assert page.panel.model.skin_png == png and page.panel.skin_bar.isVisibleTo(page.panel)
+    page.panel.slim.click()
+    assert page.panel.model.slim
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"xx")
+    page.preview_skin(bad)
+    assert page.panel.skin_hint.text() == "Нужна картинка PNG размером 64×64 или 64×32."
+    page.cancel_skin_preview()
+    assert not page.panel.skin_bar.isVisibleTo(page.panel)

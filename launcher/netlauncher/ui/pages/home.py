@@ -26,10 +26,11 @@ from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
 from netlauncher.ui.skinview import SkinView3D, face
 from netlauncher.ui.theme import qcolor
-from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, SmoothBar
+from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, SmoothBar, Toggle
 
 LOADER_NAMES = {"neoforge": "NeoForge", "fabric": "Fabric", "forge": "Forge", "quilt": "Quilt", "vanilla": ""}
 REGISTER_URL = "https://account.ely.by/register"
+ELY_SKIN_UPLOAD = "https://ely.by/load"
 
 
 def _error_text(e: BaseException) -> str:
@@ -399,7 +400,33 @@ class PackPanel(QWidget):
         self.model_slot = vbox(None, (0, 0, 0, 0), 0)
         self.model = SkinView3D()
         self.model.setToolTip("Покрути мышью")
-        self.model_slot.addWidget(self.model)
+        self.model_slot.addWidget(self.model, 1)
+        skin_row = hbox(None, (0, 0, 0, 0), 8)
+        skin_row.addStretch(1)
+        self.skin_btn = GhostButton("Сменить скин")
+        skin_row.addWidget(self.skin_btn)
+        skin_row.addStretch(1)
+        self.model_slot.addLayout(skin_row)
+        self.skin_bar = GlassCard()
+        sb = vbox(self.skin_bar, (16, 12, 16, 14), 8)
+        self.skin_hint = label("Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.", 10,
+                               role="muted", wrap=True)
+        sb.addWidget(self.skin_hint)
+        srow = hbox(None, (0, 0, 0, 0), 10)
+        srow.addWidget(label("Тонкие руки", 10, 520))
+        self.slim = Toggle()
+        srow.addWidget(self.slim)
+        srow.addStretch(1)
+        sb.addLayout(srow)
+        brow = hbox(None, (0, 0, 0, 0), 8)
+        self.skin_upload = AccentButton("Загрузить на Ely.by")
+        self.skin_reload = GhostButton("Обновить")
+        self.skin_cancel = GhostButton("Отменить")
+        for b in (self.skin_upload, self.skin_reload, self.skin_cancel):
+            brow.addWidget(b)
+        sb.addLayout(brow)
+        self.skin_bar.hide()
+        self.model_slot.addWidget(self.skin_bar)
         root.addLayout(self.model_slot, 2)
         self._chips: list[Chip] = []
 
@@ -456,6 +483,12 @@ class HomePage(QWidget):
         self.panel.update_btn.clicked.connect(self._update)
         self.panel.crash_open.clicked.connect(self._open_report)
         self.panel.crash_hide.clicked.connect(self.panel.crash_box.hide)
+        self.panel.skin_btn.clicked.connect(self.pick_skin)
+        self.panel.slim.toggled.connect(self._slim_changed)
+        self.panel.skin_upload.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(ELY_SKIN_UPLOAD)))
+        self.panel.skin_reload.clicked.connect(self.reload_skin)
+        self.panel.skin_cancel.clicked.connect(self.cancel_skin_preview)
+        self._preview_png: bytes | None = None
 
         self.timer = QTimer(self)
         self.timer.setInterval(250)
@@ -536,10 +569,55 @@ class HomePage(QWidget):
         jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache),
                  on_done=self._skin_loaded, on_error=lambda e: None)
 
+    # ---------- skin change ----------
+    def pick_skin(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Файл скина", str(Path.home()), "Скины (*.png)")
+        if path:
+            self.preview_skin(Path(path))
+
+    def preview_skin(self, path: Path) -> None:
+        p = self.panel
+        p.skin_bar.show()
+        try:
+            data = Path(path).read_bytes()
+            skin.check_skin(data)
+        except (OSError, ValueError) as e:
+            p.skin_hint.setText(str(e) if isinstance(e, ValueError) else "Не получилось открыть файл.")
+            return
+        self._preview_png = data
+        p.skin_hint.setText("Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.")
+        p.model.set_skin(skin.Skin(data, p.slim.isChecked()), entrance=False)
+
+    def _slim_changed(self, on: bool) -> None:
+        if self._preview_png is not None:
+            self.panel.model.set_skin(skin.Skin(self._preview_png, on), entrance=False)
+
+    def cancel_skin_preview(self) -> None:
+        self._preview_png = None
+        self.panel.skin_bar.hide()
+        self._load_skin(self.ctx.accounts.load())
+
+    def reload_skin(self) -> None:
+        acc = self.ctx.accounts.load()
+        if acc is None:
+            return
+        self.panel.skin_hint.setText("Загружаю скин с Ely.by")
+        jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache, force=True),
+                 on_done=self._skin_reloaded, on_error=lambda e: self.panel.skin_hint.setText(_error_text(e)))
+
+    def _skin_reloaded(self, sk) -> None:
+        self._preview_png = None
+        if sk is None:
+            self.panel.skin_hint.setText("На Ely.by у аккаунта нет скина.")
+            return
+        self.panel.skin_bar.hide()
+        self._skin_loaded(sk)
+
     def _skin_loaded(self, sk) -> None:
         if sk is None:
             return
-        self.panel.model.set_skin(sk)
+        if self._preview_png is None:
+            self.panel.model.set_skin(sk)
         if self.window is not None and hasattr(self.window, "set_face"):
             self.window.set_face(face(sk.png))
 

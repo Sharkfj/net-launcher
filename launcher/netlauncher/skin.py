@@ -19,7 +19,23 @@ class Skin:
     slim: bool
 
 
-def fetch(http: Http, name: str, cache_dir: Path) -> Skin | None:
+SIZE_ERROR = "Нужна картинка PNG размером 64×64 или 64×32."
+
+
+def png_size(data: bytes) -> tuple[int, int]:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError(SIZE_ERROR)
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def check_skin(data: bytes) -> tuple[int, int]:
+    size = png_size(data)
+    if size not in ((64, 64), (64, 32)):
+        raise ValueError(SIZE_ERROR)
+    return size
+
+
+def fetch(http: Http, name: str, cache_dir: Path, force: bool = False) -> Skin | None:
     d = Path(cache_dir) / "skins"
     png, meta = d / f"{name}.png", d / f"{name}.json"
 
@@ -34,7 +50,7 @@ def fetch(http: Http, name: str, cache_dir: Path) -> Skin | None:
 
     try:
         m = json.loads(meta.read_text(encoding="utf-8"))
-        if time.time() - float(m.get("fetched", 0)) < CACHE_TTL:
+        if not force and time.time() - float(m.get("fetched", 0)) < CACHE_TTL:
             return cached()
     except (OSError, ValueError):
         pass

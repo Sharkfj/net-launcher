@@ -111,3 +111,27 @@ def test_default_skin_and_face(qapp):
     assert not s.slim and len(s.png) > 100
     f = face(s.png)
     assert f.width() == 8 and f.height() == 8 and f.pixelColor(3, 3).alpha() == 255
+
+
+def test_png_size_and_reject():
+    assert skin.png_size(_two_tone_png()) == (64, 64)
+    assert skin.check_skin(_two_tone_png()) == (64, 64)
+    with pytest.raises(ValueError) as e:
+        skin.check_skin(b"not a png")
+    assert str(e.value) == "Нужна картинка PNG размером 64×64 или 64×32."
+    from PySide6.QtGui import QImage
+    from PySide6.QtCore import QBuffer, QIODevice
+    img = QImage(128, 128, QImage.Format.Format_ARGB32)
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.save(buf, "PNG")
+    with pytest.raises(ValueError):
+        skin.check_skin(bytes(buf.data()))
+
+
+def test_fetch_force_bypasses_cache(tmp_path):
+    http = _routes(tmp_path)
+    skin.fetch(http, "Shark", tmp_path)
+    n = len(http.calls)
+    skin.fetch(http, "Shark", tmp_path, force=True)
+    assert len(http.calls) > n
