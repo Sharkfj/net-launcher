@@ -12,8 +12,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "server"))
 import friends_server  # noqa: E402
 
 
+import os
+
+WORKER = os.environ.get("FRIENDS_WORKER_URL")   # run the same tests against the Cloudflare worker
+STUB = os.environ.get("FRIENDS_STUB_URL")       # fake Ely.by hasJoined used by that worker
+
+
+class StubJoined:
+    def add(self, pair):
+        name, sid = pair
+        req = urllib.request.Request(STUB + "/register", data=json.dumps({"name": name, "sid": sid}).encode(),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5).read()
+
+
 @pytest.fixture
 def srv(tmp_path):
+    if WORKER:
+        req = urllib.request.Request(WORKER + "/v1/_reset", data=b"{}", method="POST")
+        urllib.request.urlopen(req, timeout=10).read()
+        yield WORKER, StubJoined(), None
+        return
     joined = set()   # (name, server_id) pairs "joined" at Ely.by
 
     def verifier(name, server_id):
@@ -107,6 +126,8 @@ def test_invite_only_friends_and_validation(srv):
 
 
 def test_offline_after_timeout(srv, monkeypatch):
+    if WORKER:
+        pytest.skip("needs a fake clock")
     base, joined, _ = srv
     a, b = login(base, joined, "Shark"), login(base, joined, "Vasya")
     call(base, "/v1/friends/request", {"name": "Vasya"}, a)
