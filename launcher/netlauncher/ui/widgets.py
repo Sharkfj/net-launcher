@@ -197,6 +197,9 @@ class Avatar(QWidget):
         self._letter = (name[:1] or "?").upper()
         self.update()
 
+    def has_face(self) -> bool:
+        return self._face is not None and not self._face.isNull()
+
     def set_face(self, img: QImage | None) -> None:
         self._face = img
         self.update()

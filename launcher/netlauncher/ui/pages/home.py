@@ -9,7 +9,7 @@ from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPainter
 from PySide6.QtWidgets import (QFileDialog, QInputDialog, QLineEdit, QSizePolicy, QStackedWidget, QWidget)
 
-from netlauncher import localpacks
+from netlauncher import localpacks, skin
 from netlauncher.auth_ely import (Account, AuthUnavailable, BadCredentials, NeedLogin, TwoFactorRequired,
                                   ensure_valid)
 from netlauncher.author import new_pack_id
@@ -23,6 +23,7 @@ from netlauncher.pack import MrPack, add_manual, apply_update, load_state, plan_
 from netlauncher.settings import recommended_ram_mb
 from netlauncher.ui import anim, jobs
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
+from netlauncher.ui.skinview import SkinView3D, face
 from netlauncher.ui.theme import qcolor
 from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, SmoothBar
 
@@ -351,6 +352,7 @@ class PackPanel(QWidget):
         left.addSpacing(6)
         self.bar = SmoothBar(height=4)
         self.bar.setMaximumWidth(560)
+        self.bar.hide()
         left.addWidget(self.bar)
         left.addSpacing(18)
 
@@ -394,6 +396,9 @@ class PackPanel(QWidget):
         left.addStretch(1)
         root.addLayout(left, 3)
         self.model_slot = vbox(None, (0, 0, 0, 0), 0)
+        self.model = SkinView3D()
+        self.model.setToolTip("Покрути мышью")
+        self.model_slot.addWidget(self.model)
         root.addLayout(self.model_slot, 2)
         self._chips: list[Chip] = []
 
@@ -456,6 +461,7 @@ class HomePage(QWidget):
         self.timer.timeout.connect(self._poll)
         self.refresh()
         self._load_catalog()
+        self._load_skin(self.ctx.accounts.load())
 
     # ---------- state ----------
     def mode(self) -> str:
@@ -525,6 +531,20 @@ class HomePage(QWidget):
 
     def _on_login(self, acc: Account) -> None:
         self.refresh()
+        self._load_skin(acc)
+
+    def _load_skin(self, acc: Account | None) -> None:
+        if acc is None:
+            return
+        jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache),
+                 on_done=self._skin_loaded, on_error=lambda e: None)
+
+    def _skin_loaded(self, sk) -> None:
+        if sk is None:
+            return
+        self.panel.model.set_skin(sk)
+        if self.window is not None and hasattr(self.window, "set_face"):
+            self.window.set_face(face(sk.png))
 
     def _load_catalog(self) -> None:
         jobs.run(lambda progress: resolve_catalog(self.ctx.http), on_done=self._catalog_loaded,
@@ -615,6 +635,7 @@ class HomePage(QWidget):
             self.play(server=lp.server)
 
     def _set_playing(self, on: bool) -> None:
+        self.panel.bar.setVisible(on)
         for b in (self.panel.play_btn, self.panel.continue_btn, self.panel.server_btn, self.panel.update_btn):
             b.setEnabled(not on)
 
