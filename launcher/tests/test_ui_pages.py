@@ -67,6 +67,7 @@ def env(qapp, home, monkeypatch):
                      f"{API}/search": {"hits": [proj]}, f"{API}/projects": [proj],
                      f"{API}/project/shoulder/version": [nv]}, downloads={"https://cdn/ss.jar": NEW})
     ctx = make_context(home, http)
+    ctx.settings.first_run_done = True
     ctx.accounts.save(Account("Shark", "abc", "tok", "ct"))
     confirms = []
     monkeypatch.setattr(common, "confirm", lambda parent, title, text, ok: (confirms.append(text), True)[1])
@@ -190,3 +191,13 @@ def test_browser_source_switch_requires_key(env, monkeypatch):
     assert page.browser.source == "curseforge"
     pump(until=lambda: len(page.browser.cards) == 1)
     assert page.browser.cards[0].title.text() == "Chromeware" and page.browser.cards[0].meta.text() == "2 тыс. загрузок"
+
+
+def test_settings_theme_switch(env):
+    w, ctx, gd, _ = env
+    page = w.page("settings")
+    assert w.theme == "glass" and page.theme_chips["glass"].active
+    page.set_theme("solid")
+    assert w.theme == "solid" and ctx.settings.theme == "solid" and page.theme_chips["solid"].active
+    page.set_theme("glass")
+    assert w.theme == "glass"

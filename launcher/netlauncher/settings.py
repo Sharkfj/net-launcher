@@ -22,6 +22,8 @@ class Settings:
     source_instance: str = ""
     selected_pack: str = "net"
     curseforge_key: str = ""
+    theme: str = "glass"  # "glass" (transparent, blurred) or "solid"
+    first_run_done: bool = False
 
 
 def load_settings(path: Path) -> Settings:

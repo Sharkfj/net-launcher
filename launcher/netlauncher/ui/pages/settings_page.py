@@ -110,6 +110,16 @@ class SettingsPage(QWidget):
         self.animations._set_knob(1.0 if s.animations else 0.0)
         self.animations.toggled.connect(self._animations)
         lc.addWidget(_line("Анимации", self.animations, "Плавные переходы и движения фигуры."))
+        from netlauncher.ui.pages.home import Chip
+        theme_box = QWidget()
+        tb = hbox(theme_box, (0, 0, 0, 0), 8)
+        self.theme_chips = {}
+        for key, text in (("glass", "Стекло"), ("solid", "Сплошная")):
+            c = Chip(text, s.theme == key)
+            c.clicked.connect(lambda key=key: self.set_theme(key))
+            tb.addWidget(c)
+            self.theme_chips[key] = c
+        lc.addWidget(_line("Тема", theme_box, "Стекло: прозрачное окно с размытием. Сплошная: без прозрачности."))
         self.cf_key = QLineEdit(s.curseforge_key)
         self.cf_key.setPlaceholderText("Ключ CurseForge API")
         self.cf_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -219,6 +229,15 @@ class SettingsPage(QWidget):
         self.ctx.settings.animations = on
         anim.set_enabled(on)
         self.ctx.save()
+
+    def set_theme(self, key: str) -> None:
+        self.ctx.settings.theme = key
+        self.ctx.save()
+        for k, c in self.theme_chips.items():
+            c.active = k == key
+            c.update()
+        if self.window is not None and hasattr(self.window, "set_theme"):
+            self.window.set_theme(key)
 
     def _save_cf(self) -> None:
         self.ctx.settings.curseforge_key = self.cf_key.text().strip()

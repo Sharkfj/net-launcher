@@ -65,6 +65,7 @@ def make(qapp, home, monkeypatch):
     def build(http=None, account=True, pack=True, catalog=None):
         http = http or FakeHttp({f"{AUTH}/validate": None})
         ctx = make_context(home, http)
+        ctx.settings.first_run_done = True
         if account:
             ctx.accounts.save(Account("Shark", "abc", "tok", "ct"))
         if pack:
@@ -242,3 +243,21 @@ def test_skin_preview_from_file(make, tmp_path):
     assert page.panel.skin_hint.text() == "Нужна картинка PNG размером 64×64 или 64×32."
     page.cancel_skin_preview()
     assert not page.panel.skin_bar.isVisibleTo(page.panel)
+
+
+def test_first_run_theme_choice(qapp, home, monkeypatch):
+    anim.set_enabled(False)
+    monkeypatch.setattr("netlauncher.ui.pages.home.resolve_catalog", lambda http: None)
+    ctx = make_context(home, FakeHttp())
+    w = MainWindow(ctx, page_factory=FACTORY)
+    w.show()
+    page = w.page("home")
+    assert page.mode() == "welcome"
+    assert [c.title for c in page.welcome.cards] == ["Стекло", "Сплошная"]
+    page.welcome.pick("solid")
+    assert w.theme == "solid" and not w.blurred
+    page.welcome.next_btn.click()
+    assert page.mode() == "login" and ctx.settings.theme == "solid" and ctx.settings.first_run_done
+    from netlauncher.settings import load_settings
+    assert load_settings(ctx.lay.settings_file).theme == "solid"
+    anim.set_enabled(True)

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPainter
+from PySide6.QtGui import QDesktopServices, QPainter, QPainterPath
 from PySide6.QtWidgets import (QFileDialog, QInputDialog, QLineEdit, QSizePolicy, QStackedWidget, QWidget)
 
 from netlauncher import localpacks, skin
@@ -129,6 +129,99 @@ class LoginPanel(QWidget):
     def _reset_button(self):
         self.button.setEnabled(True)
         self.button.setText("Войти")
+
+
+# ---------------------------------------------------------------- first run: theme
+class ThemeCard(QWidget):
+    clicked = Signal(str)
+
+    def __init__(self, key: str, title: str, text: str, parent=None):
+        super().__init__(parent)
+        self.key, self.title, self.text = key, title, text
+        self.selected = False
+        self.setFixedSize(260, 230)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        self.clicked.emit(self.key)
+
+    def paintEvent(self, e):  # noqa: N802
+        from PySide6.QtGui import QColor, QLinearGradient, QPen, QRadialGradient
+        from netlauncher.ui.theme import font
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.setPen(QPen(qcolor("accent") if self.selected else qcolor("border"), 2 if self.selected else 1))
+        p.setBrush(qcolor("card"))
+        p.drawRoundedRect(r, 16, 16)
+        prev = QRectF(16, 16, r.width() - 30, 130)
+        p.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(prev, 10, 10)
+        p.setClipPath(clip)
+        if self.key == "glass":
+            p.fillRect(prev, QColor("#20304F"))
+            for cx, cy, rad, col in ((50, 40, 60, "#E0773A"), (170, 120, 70, "#3FA36B"), (200, 30, 50, "#8E5BD8")):
+                g = QRadialGradient(prev.x() + cx, prev.y() + cy, rad)
+                g.setColorAt(0, QColor(col))
+                g.setColorAt(1, QColor(0, 0, 0, 0))
+                p.fillRect(prev, g)
+            p.fillRect(prev.adjusted(18, 16, -18, -16), qcolor("window"))
+        else:
+            g = QLinearGradient(prev.topLeft(), prev.bottomLeft())
+            g.setColorAt(0, QColor("#0F1A2E"))
+            g.setColorAt(1, QColor("#0A101D"))
+            p.fillRect(prev, g)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(qcolor("accent"))
+        p.drawRoundedRect(QRectF(prev.x() + 34, prev.bottom() - 40, 70, 18), 6, 6)
+        p.setBrush(QColor(255, 255, 255, 40))
+        p.drawRoundedRect(QRectF(prev.x() + 34, prev.y() + 30, 110, 12), 4, 4)
+        p.restore()
+        p.setPen(qcolor("text"))
+        p.setFont(font(12, 620))
+        p.drawText(QRectF(18, 156, r.width() - 30, 24), Qt.AlignmentFlag.AlignLeft, self.title)
+        p.setPen(qcolor("muted"))
+        p.setFont(font(9.5))
+        p.drawText(QRectF(18, 182, r.width() - 30, 40), Qt.TextFlag.TextWordWrap, self.text)
+
+
+class WelcomePanel(QWidget):
+    done = Signal(str)
+    picked = Signal(str)
+
+    def __init__(self, current: str = "glass", parent=None):
+        super().__init__(parent)
+        lay = vbox(self, (8, 0, 8, 0), 12)
+        lay.addStretch(1)
+        lay.addWidget(label("Добро пожаловать", 30, 650, display=True))
+        lay.addWidget(label("Выбери, как будет выглядеть лаунчер. Поменять можно в настройках.", 11, role="muted"))
+        lay.addSpacing(14)
+        row = hbox(None, (0, 0, 0, 0), 16)
+        self.cards = [ThemeCard("glass", "Стекло", "Окно прозрачное, за ним размытый рабочий стол."),
+                      ThemeCard("solid", "Сплошная", "Тёмно-синее окно без прозрачности.")]
+        for c in self.cards:
+            c.clicked.connect(self.pick)
+            row.addWidget(c)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addSpacing(14)
+        self.next_btn = AccentButton("Дальше")
+        self.next_btn.clicked.connect(lambda: self.done.emit(self.choice))
+        lay.addWidget(self.next_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        lay.addStretch(2)
+        self.choice = current
+        self._mark()
+
+    def pick(self, key: str) -> None:
+        self.choice = key
+        self._mark()
+        self.picked.emit(key)
+
+    def _mark(self):
+        for c in self.cards:
+            c.selected = c.key == self.choice
+            c.update()
 
 
 # ---------------------------------------------------------------- no packs yet
@@ -463,17 +556,20 @@ class HomePage(QWidget):
         lay = vbox(self)
         self.stack = QStackedWidget()
         lay.addWidget(self.stack)
+        self.welcome = WelcomePanel(ctx.settings.theme)
         self.login = LoginPanel(ctx)
         self.empty = EmptyPanel()
         self.panel = PackPanel()
         self.busy = ProgressPanel()
         self.manual = ManualPanel()
-        self._modes = {"login": self.login, "empty": self.empty, "pack": self.panel, "install": self.busy,
+        self._modes = {"welcome": self.welcome, "login": self.login, "empty": self.empty, "pack": self.panel, "install": self.busy,
                        "manual": self.manual}
         for w in self._modes.values():
             self.stack.addWidget(w)
 
         self.login.logged_in.connect(self._on_login)
+        self.welcome.picked.connect(self._preview_theme)
+        self.welcome.done.connect(self._welcome_done)
         self.empty.install_entry.connect(self.install_entry)
         self.empty.import_from.connect(self.import_instance)
         self.manual.finished.connect(self.refresh)
@@ -511,7 +607,21 @@ class HomePage(QWidget):
     def current_pack(self) -> LocalPack | None:
         return common.current_pack(self.ctx)
 
+    def _preview_theme(self, theme: str) -> None:
+        if self.window is not None and hasattr(self.window, "set_theme"):
+            self.window.set_theme(theme)
+
+    def _welcome_done(self, theme: str) -> None:
+        self.ctx.settings.theme = theme
+        self.ctx.settings.first_run_done = True
+        self.ctx.save()
+        self._preview_theme(theme)
+        self.refresh()
+
     def refresh(self) -> None:
+        if not self.ctx.settings.first_run_done:
+            self._set_mode("welcome")
+            return
         acc = self.ctx.accounts.load()
         if self.window is not None and hasattr(self.window, "set_account"):
             self.window.set_account(acc)
