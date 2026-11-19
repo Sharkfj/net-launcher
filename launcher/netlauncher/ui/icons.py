@@ -48,6 +48,13 @@ def _settings(p: QPainterPath):
         p.addEllipse(QPointF(x, y), 1.8, 1.8)
 
 
+def _friends(p: QPainterPath):
+    p.addEllipse(QPointF(7.5, 7), 2.8, 2.8)
+    p.moveTo(2.5, 16.5); p.cubicTo(2.5, 12.5, 12.5, 12.5, 12.5, 16.5)  # noqa: E702
+    p.addEllipse(QPointF(13.8, 7.6), 2.3, 2.3)
+    p.moveTo(13.5, 12.2); p.cubicTo(16, 12.2, 17.6, 13.6, 17.6, 16)  # noqa: E702
+
+
 def _minimize(p: QPainterPath):
     p.moveTo(5.5, 10); p.lineTo(14.5, 10)  # noqa: E702
 
@@ -66,7 +73,7 @@ def _search(p: QPainterPath):
 
 
 DRAW = {"home": _home, "mods": _mods, "resourcepacks": _resourcepacks, "shaders": _shaders,
-        "snapshots": _snapshots, "settings": _settings, "minimize": _minimize, "close": _close,
+        "snapshots": _snapshots, "settings": _settings, "friends": _friends, "minimize": _minimize, "close": _close,
         "play": _play, "search": _search}
 FILLED = {"play"}
 

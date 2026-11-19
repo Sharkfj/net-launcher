@@ -37,7 +37,8 @@ def win(qapp, home):
 
 
 def test_window_builds_all_pages(win):
-    assert [name for name, _ in PAGES] == ["home", "mods", "resourcepacks", "shaders", "snapshots", "settings"]
+    assert [name for name, _ in PAGES] == ["home", "mods", "resourcepacks", "shaders", "friends", "snapshots",
+                                           "settings"]
     for name, title in PAGES:
         assert isinstance(win.page(name), QWidget)
         assert win.nav_button(name).text() == title

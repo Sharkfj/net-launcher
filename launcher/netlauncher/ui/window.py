@@ -14,7 +14,7 @@ from netlauncher.ui.theme import DISPLAY, font, qcolor
 from netlauncher.ui.widgets import Avatar, _HoverMixin, _mix
 
 PAGES = [("home", "Главная"), ("mods", "Моды"), ("resourcepacks", "Ресурспаки"), ("shaders", "Шейдеры"),
-         ("snapshots", "Снимки"), ("settings", "Настройки")]
+         ("friends", "Друзья"), ("snapshots", "Снимки"), ("settings", "Настройки")]
 RADIUS = 18
 SIDEBAR_W = 208
 TITLE_H = 52
@@ -169,6 +169,7 @@ class MainWindow(QWidget):
         self.resize(1180, 720)
         self.setMinimumSize(980, 620)
         self.blurred = False
+        self.game_status = ("launcher", "", "")
         self.theme = getattr(ctx.settings, "theme", "glass") if ctx is not None else "glass"
         self._animating = 0
         self._opened = False

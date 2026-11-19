@@ -125,6 +125,12 @@ class SettingsPage(QWidget):
         self.cf_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.cf_key.setMinimumWidth(340)
         self.cf_key.editingFinished.connect(self._save_cf)
+        self.friends_url = QLineEdit(s.friends_url)
+        self.friends_url.setPlaceholderText("https://friends.example.net")
+        self.friends_url.setMinimumWidth(340)
+        self.friends_url.editingFinished.connect(self._save_friends)
+        lc.addWidget(_line("Сервер друзей", self.friends_url,
+                           "Обычно его задаёт автор сборки. Заполняй, только если тебе дали другой адрес."))
         lc.addWidget(_line("CurseForge", self.cf_key,
                            "Нужен для поиска модов на CurseForge. Бесплатный ключ выдают на console.curseforge.com."))
         btns = hbox(None, (0, 4, 0, 0), 8)
@@ -238,6 +244,10 @@ class SettingsPage(QWidget):
             c.update()
         if self.window is not None and hasattr(self.window, "set_theme"):
             self.window.set_theme(key)
+
+    def _save_friends(self) -> None:
+        self.ctx.settings.friends_url = self.friends_url.text().strip()
+        self.ctx.save()
 
     def _save_cf(self) -> None:
         self.ctx.settings.curseforge_key = self.cf_key.text().strip()

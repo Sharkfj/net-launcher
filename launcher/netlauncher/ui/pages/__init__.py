@@ -13,10 +13,15 @@ def _snapshots(ctx, window):
     return SnapshotsPage(ctx, window)
 
 
+def _friends(ctx, window):
+    from netlauncher.ui.pages.friends_page import FriendsPage
+    return FriendsPage(ctx, window)
+
+
 def _settings(ctx, window):
     from netlauncher.ui.pages.settings_page import SettingsPage
     return SettingsPage(ctx, window)
 
 
 FACTORY = {"home": HomePage, "mods": _content("mod"), "resourcepacks": _content("resourcepack"),
-           "shaders": _content("shader"), "snapshots": _snapshots, "settings": _settings}
+           "shaders": _content("shader"), "friends": _friends, "snapshots": _snapshots, "settings": _settings}
