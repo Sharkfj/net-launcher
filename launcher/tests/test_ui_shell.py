@@ -141,3 +141,24 @@ def test_widget_fonts_survive_stylesheet(win):
     assert brand.font().family() == "Unbounded" and brand.font().pointSizeF() == pytest.approx(15)
     title = next(l for l in win.page("home").findChildren(QLabel) if l.text() == "Главная")
     assert title.font().pointSizeF() == pytest.approx(22)
+
+
+def test_stagger_keeps_layout_positions(qapp):
+    from PySide6.QtWidgets import QLabel, QVBoxLayout
+    anim.set_enabled(True)
+    box = QWidget()
+    lay = QVBoxLayout(box)
+    box.resize(300, 400)
+    box.show()
+    pump(20)
+    rows = []
+    for i in range(5):
+        lab = QLabel(f"row {i}")
+        lab.setFixedHeight(40)
+        lay.addWidget(lab)
+        rows.append(lab)
+    anim.stagger(rows)          # rows were just added: the layout has not placed them yet
+    pump(700)
+    ys = [r.y() for r in rows]
+    assert ys == sorted(ys) and len(set(ys)) == 5
+    assert all(r.graphicsEffect() is None for r in rows)

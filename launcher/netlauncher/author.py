@@ -134,8 +134,12 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
         if v:
             f = next((x for x in v.files if x.sha1 == digest), v.primary_file)
             proj = projects.get(v.project_id)
+            client = _side(proj.client_side if proj else "")
+            # singleplayer runs a server inside the client: server-only mods (worldgen, weather) are needed there too
+            if client == "unsupported":
+                client = "optional"
             files.append(PackFile(rel, digest, f.sha512, f.size or (game_dir / rel).stat().st_size, [f.url],
-                                  _side(proj.client_side if proj else ""), _side(proj.server_side if proj else "")))
+                                  client, _side(proj.server_side if proj else "")))
             continue
         if rel.startswith("mods/"):
             meta = read_jar(game_dir / rel)

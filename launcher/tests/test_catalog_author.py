@@ -215,3 +215,14 @@ def test_build_pointblank_from_modrinth_and_manual_page_fallback(tmp_path):
     assert "pointblank/Cyberpunk_2077_Guns_Pack_1.20.5.zip" in [f.path for f in res.index.files]
     assert not any(o.startswith("pointblank/") for o in res.overrides)
     assert res.index.manual[0].page_url == "https://www.curseforge.com/minecraft/search?search=Create%3A%20Chromeware"
+
+
+def test_server_only_mods_still_installed_on_client(tmp_path):
+    gd = tmp_path / "сборка"
+    mr, on_mr = _mr_world(gd)
+    mr.http.routes[f"{API}/projects"] = [{"id": "AANobbMI", "slug": "yungs", "title": "YUNG's Better Dungeons",
+                                          "description": "", "downloads": 1, "icon_url": "", "project_type": "mod",
+                                          "client_side": "unsupported", "server_side": "required"}]
+    res = author.build(gd, mr, ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", "", None)
+    [f] = res.index.files
+    assert f.client == "optional" and f.server == "required"

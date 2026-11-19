@@ -61,6 +61,13 @@ def tween(start, end, ms: int, on_value: Callable, on_done: Callable | None = No
     return a
 
 
+def _settle(w: QWidget) -> None:
+    """Let the parent layout place `w` (newly added widgets sit at 0,0 until it runs)."""
+    parent = w.parentWidget()
+    if parent is not None and parent.layout() is not None:
+        parent.layout().activate()
+
+
 def fade_slide_in(w: QWidget, dx: int = 24, dy: int = 0, ms: int = 220, delay: int = 0,
                   on_done: Callable | None = None) -> None:
     if not _enabled:
@@ -70,33 +77,56 @@ def fade_slide_in(w: QWidget, dx: int = 24, dy: int = 0, ms: int = 220, delay: i
     eff = QGraphicsOpacityEffect(w)
     eff.setOpacity(0.0)
     w.setGraphicsEffect(eff)
-    end = w.pos()
-    start = end + QPoint(dx, dy)
-    w.move(start)
     group = QParallelAnimationGroup()
-    fade = QPropertyAnimation(eff, b"opacity")
-    fade.setStartValue(0.0)
-    fade.setEndValue(1.0)
-    move = QPropertyAnimation(w, b"pos")
-    move.setStartValue(start)
-    move.setEndValue(end)
-    for a in (fade, move):
-        a.setDuration(ms)
-        a.setEasingCurve(QEasingCurve.Type.OutCubic)
-        group.addAnimation(a)
+    _track(group)
+
+    def begin():
+        import shiboken6
+        if not shiboken6.isValid(w):
+            _running.discard(group)
+            return
+        _settle(w)
+        end = w.pos()
+        start = end + QPoint(dx, dy)
+        fade = QPropertyAnimation(eff, b"opacity")
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        anims = [fade]
+        if dx or dy:
+            move = QPropertyAnimation(w, b"pos")
+            move.setStartValue(start)
+            move.setEndValue(end)
+            anims.append(move)
+            w.move(start)
+        for a in anims:
+            a.setDuration(ms)
+            a.setEasingCurve(QEasingCurve.Type.OutCubic)
+            group.addAnimation(a)
+        group.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def finished():
-        # never drop the effect inside its own animation's finished(): defer
-        QTimer.singleShot(0, lambda: (w.setGraphicsEffect(None) if w.graphicsEffect() is eff else None))
+        def cleanup():
+            if shiboken6_valid(w):
+                if w.graphicsEffect() is eff:
+                    w.setGraphicsEffect(None)  # never inside the animation's own finished()
+                parent = w.parentWidget()
+                if parent is not None and parent.layout() is not None:
+                    parent.layout().invalidate()
+                    parent.layout().activate()
+        QTimer.singleShot(0, cleanup)
         if on_done:
             on_done()
 
     group.finished.connect(finished)
-    _track(group)
     if delay > 0:
-        QTimer.singleShot(delay, lambda: group.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped))
+        QTimer.singleShot(delay, begin)
     else:
-        group.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+        begin()
+
+
+def shiboken6_valid(obj) -> bool:
+    import shiboken6
+    return shiboken6.isValid(obj)
 
 
 def fade_out(w: QWidget, ms: int = 160, then: Callable | None = None) -> None:
