@@ -1,8 +1,11 @@
 {
  "format": 1,
  "launcher": {
-  "version": "",
-  "urls": {}
+  "version": "0.1.0",
+  "urls": {
+   "windows": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.1.0/NET-Launcher.exe",
+   "linux": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.1.0/NET-Launcher-linux.tar.gz"
+  }
  },
  "packs": [
   {
