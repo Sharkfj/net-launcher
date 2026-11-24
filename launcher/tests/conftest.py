@@ -1,4 +1,7 @@
+import gc
+
 import pytest
+import shiboken6
 
 from netlauncher import i18n, paths
 
@@ -11,9 +14,17 @@ def keep_qt_alive():
 
     app = QApplication.instance() or QApplication([])
     yield app
-    QThreadPool.globalInstance().waitForDone()
-    app.closeAllWindows()
+    pool = QThreadPool.globalInstance()
+    pool.waitForDone()
     app.processEvents()
+    app.closeAllWindows()
+    for widget in app.topLevelWidgets():
+        if shiboken6.isValid(widget):
+            widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    pool.waitForDone()
+    app.processEvents()
+    gc.collect()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
 

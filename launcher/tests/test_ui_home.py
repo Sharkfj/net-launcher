@@ -434,11 +434,12 @@ def test_welcome_asks_shortcut_once(qapp, home, monkeypatch):
     anim.set_enabled(True)
 
 
-def test_microsoft_login_button_in_development(make):
+def test_microsoft_login_requires_client_id(make, monkeypatch):
+    monkeypatch.setattr("netlauncher.auth_ms.MS_CLIENT_ID", "")
     w, page, ctx = make(account=False)
     btn = page.login.ms_button
     assert not btn.isEnabled() and btn.text() == "Войти через Microsoft"
-    assert page.login.ms_note.text() == "В разработке"
+    assert page.login.ms_note.text() == "Вход ещё недоступен"
 
 
 def test_microsoft_login_english(make):
