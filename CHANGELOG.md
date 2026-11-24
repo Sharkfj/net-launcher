@@ -1,4 +1,4 @@
-# .NET Launcher 0.3.0 beta 2
+# .NET Launcher 0.3.0 beta 3
 
 ## Packs and worlds
 
@@ -16,6 +16,7 @@
 
 ## Desktop integration
 
+- Linux downloads include an x86_64 AppImage for common desktop distributions, alongside the standalone archive. The AppImage requires a compatible glibc; it cannot cover every Linux system or CPU architecture.
 - Discord Rich Presence can show the launcher logo, the active pack and time played. The application ID is built in. Use **Settings → Discord activity** to switch it off.
 - Updated the desktop and tray icons and added an animated startup sequence. The interface supports English and Russian.
 

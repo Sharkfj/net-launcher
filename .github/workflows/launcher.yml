@@ -31,11 +31,47 @@ jobs:
       - name: Archive (Linux)
         if: runner.os == 'Linux'
         run: tar -C dist -czf NET-Launcher-linux.tar.gz net-launcher
-      - name: Keep the platform download
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications
+          cp -a dist/net-launcher/. AppDir/usr/bin/
+          cp netlauncher/ui/assets/icon/icon.png AppDir/net-launcher.png
+          cat > AppDir/net-launcher.desktop <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=.NET Launcher
+          Exec=net-launcher
+          Icon=net-launcher
+          Terminal=false
+          Categories=Game;
+          DESKTOP
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 LDAI_OUTPUT=NET-Launcher-x86_64.AppImage \
+            LINUXDEPLOY_OUTPUT_VERSION="${GITHUB_REF_NAME#launcher-v}" \
+            ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+              --executable AppDir/usr/bin/net-launcher \
+              --desktop-file AppDir/net-launcher.desktop \
+              --icon-file AppDir/net-launcher.png --output appimage
+      - name: Keep Windows download
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: launcher-${{ runner.os }}
-          path: ${{ runner.os == 'Windows' && 'launcher/dist/NET-Launcher.exe' || 'launcher/NET-Launcher-linux.tar.gz' }}
+          name: launcher-Windows
+          path: launcher/dist/NET-Launcher.exe
+          if-no-files-found: error
+      - name: Keep Linux downloads
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-Linux
+          path: |
+            launcher/NET-Launcher-linux.tar.gz
+            launcher/NET-Launcher-x86_64.AppImage
           if-no-files-found: error
   release:
     needs: build
@@ -60,4 +96,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             downloads/NET-Launcher.exe
+            downloads/NET-Launcher-x86_64.AppImage
             downloads/NET-Launcher-linux.tar.gz

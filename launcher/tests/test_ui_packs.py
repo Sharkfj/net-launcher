@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -80,7 +81,7 @@ def test_open_folder_opens_game_dir(win, monkeypatch):
     monkeypatch.setattr("netlauncher.ui.pages.packs_page.QDesktopServices.openUrl", lambda url: opened.append(url.toLocalFile()))
     w.open_page("packs")
     w.page("packs").rows[1].folder_btn.click()
-    assert opened == [str(localpacks.game_dir(ctx.lay, "mine"))]
+    assert Path(opened[0]) == localpacks.game_dir(ctx.lay, "mine")
 
 
 SECTIONS = {"mods", "resourcepacks", "shaders", "snapshots", "screenshots", "worlds"}

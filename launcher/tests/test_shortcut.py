@@ -1,7 +1,7 @@
 import os
 import stat
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from netlauncher import shortcut
 
@@ -32,7 +32,7 @@ def test_linux_desktop_file(tmp_path, monkeypatch):
     monkeypatch.setattr(shortcut.sys, "platform", "linux")
     ran = Ran()
     monkeypatch.setattr(shortcut.subprocess, "run", ran)
-    f = shortcut.create(["/x/net-launcher"], Path("/x/icon.png"))
+    f = shortcut.create(["/x/net-launcher"], PurePosixPath("/x/icon.png"))
     text = f.read_text(encoding="utf-8")
     assert f == tmp_path / "Desktop" / "net-launcher.desktop"
     assert "Exec=/x/net-launcher" in text and "Icon=/x/icon.png" in text and "Name=.NET Launcher" in text

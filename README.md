@@ -3,9 +3,11 @@
 <h1 align="center">.NET Launcher</h1>
 <p align="center">A Minecraft launcher for official modpacks and packs you build yourself.</p>
 <p align="center">
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.2/NET-Launcher.exe"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher.exe"><strong>Download for Windows</strong></a>
   &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.2/NET-Launcher-linux.tar.gz"><strong>Download for Linux</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher-x86_64.AppImage"><strong>Download Linux AppImage (64-bit)</strong></a>
+  &nbsp; · &nbsp;
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher-linux.tar.gz"><strong>Linux archive</strong></a>
   &nbsp; · &nbsp;
   <a href="CHANGELOG.md">What's new in 0.3.0 beta</a>
 </p>
@@ -14,7 +16,7 @@
 
 ## Play your first pack
 
-1. Open **NET-Launcher.exe** on Windows. On Linux, extract **NET-Launcher-linux.tar.gz** and run **net-launcher** inside the extracted folder.
+1. Open **NET-Launcher.exe** on Windows. On 64-bit Linux, run `chmod +x NET-Launcher-x86_64.AppImage && ./NET-Launcher-x86_64.AppImage`. The **NET-Launcher-linux.tar.gz** archive is available as an alternative.
 2. Choose English or Russian. Sign in with [Ely.by](https://account.ely.by/register) for your skin and multiplayer, or choose **Play without signing in** for single-player.
 3. Open **Official**, select **.NET** and click **Install**. The launcher sets up Minecraft, Java and NeoForge. If a mod requires a manual download, follow the link and drop the file into the launcher.
 4. Click **Play**. When an official pack update is available, the button changes to **Update**. The launcher backs up your worlds before applying it.
