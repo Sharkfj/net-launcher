@@ -19,10 +19,11 @@ from netlauncher.pack import load_state
 from netlauncher.ui import anim, icons, jobs
 from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, human_downloads, label, plural, vbox
-from netlauncher.ui.pages.home import Chip, _error_text
+from netlauncher.ui.pages.home import LOADER_NAMES, Chip, _error_text
 from netlauncher.ui.theme import qcolor
 from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, Toggle, search_field
 
+FIND_TITLES = {"mod": "Добавить моды", "resourcepack": "Найти ресурспаки", "shader": "Найти шейдеры"}
 TITLES = {"mod": "Моды", "resourcepack": "Ресурспаки", "shader": "Шейдеры"}
 WORDS = {"mod": ("мод", "мода", "модов"), "resourcepack": ("ресурспак", "ресурспака", "ресурспаков"),
          "shader": ("шейдер", "шейдера", "шейдеров")}
@@ -124,6 +125,7 @@ class ResultCard(GlassCard):
         col.addWidget(self.meta)
         row.addLayout(col, 1)
         self.install_btn = AccentButton(t('Установить'))
+        self.install_btn.setAccessibleName(t("Установить {title}", title=project.title))
         self.install_btn.clicked.connect(lambda: self.install.emit(self.project))
         row.addWidget(self.install_btn)
 
@@ -365,7 +367,7 @@ class Browser(QWidget):
         self.ctx, self.kind = ctx, kind
         lay = vbox(self, (0, 0, 0, 0), 10)
         top = hbox(None, (0, 0, 0, 0), 10)
-        back = GhostButton(t('Назад к списку'))
+        back = GhostButton(t("Установленные моды") if kind == "mod" else t('Назад к списку'))
         back.clicked.connect(self.back.emit)
         self.query = search_field(t('Поиск на Modrinth'))
         top.addWidget(back)
@@ -393,6 +395,13 @@ class Browser(QWidget):
         self.category.currentIndexChanged.connect(lambda _i: self.run_search())
         filters.addWidget(self.category)
         lay.addLayout(filters)
+        self.target = label("", 10, role="muted", wrap=True)
+        self.target.setTextFormat(Qt.TextFormat.PlainText)
+        lay.addWidget(self.target)
+        self.install_note = label("", 10, role="muted", wrap=True)
+        self.install_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.install_note.hide()
+        lay.addWidget(self.install_note)
         srow = hbox(None, (0, 0, 0, 0), 10)
         self.status = label("", 10, role="muted", wrap=True)
         self.page_btn = GhostButton(t('Открыть страницу мода'))
@@ -419,6 +428,8 @@ class Browser(QWidget):
         body.addWidget(self.detail, 1)
         lay.addLayout(body, 1)
         self.cards: list[ResultCard] = []
+        self.installing: str | None = None
+        self.installed_projects: set[str] = set()
         self.debounce = QTimer(self)
         self.debounce.setSingleShot(True)
         self.debounce.setInterval(300)
@@ -442,6 +453,9 @@ class Browser(QWidget):
             if account is None or getattr(account, "offline", False):
                 self.status.setText(t('Войди через Ely.by для поиска на CurseForge.'))
                 return
+        if self.source != key:
+            self._clear_cards()
+            self.close_detail()
         self.source = key
         for k, c in self.source_chips.items():
             c.active = k == key
@@ -484,6 +498,11 @@ class Browser(QWidget):
         lp = common.current_pack(self.ctx)
         if lp is None:
             return
+        prov = self.provider()
+        if prov is None:
+            return
+        self.target.setText(t("Сборка «{name}» · Minecraft {version} · {loader}",
+                              name=lp.name, version=lp.mc_version, loader=LOADER_NAMES.get(lp.loader) or "Vanilla"))
         self._load_categories()
         self._seq += 1
         seq = self._seq
@@ -496,11 +515,10 @@ class Browser(QWidget):
         self.status.setText(t('Ищу'))
         self.show_page_link("")
         loader = lp.loader if self.source == "curseforge" else search_loader(self.kind, lp.loader)
-        prov = self.provider()
         jobs.run(lambda progress: prov.search(q, PROJECT_TYPES[self.kind], lp.mc_version, loader, offset=offset,
                                               limit=PAGE, sort=sort, category=cat),
                  on_done=lambda hits: self._show(seq, hits, append),
-                 on_error=lambda e: self.status.setText(_error_text(e)))
+                 on_error=lambda e: self.status.setText(_error_text(e)) if seq == self._seq else None)
 
     def load_more(self) -> None:
         self._offset += PAGE
@@ -510,10 +528,7 @@ class Browser(QWidget):
         if seq != self._seq:
             return
         if not append:
-            for c in self.cards:
-                c.setParent(None)
-                c.deleteLater()
-            self.cards = []
+            self._clear_cards()
         new = []
         for proj in hits:
             card = ResultCard(proj, self.kind)
@@ -521,12 +536,35 @@ class Browser(QWidget):
             card.chosen.connect(self.open_detail)
             self.list.insertWidget(self.list.indexOf(self.more_btn), card)
             self.cards.append(card)
+            self._paint_install_button(card)
             new.append(card)
             if proj.icon_url:
                 self._icon(card, proj.icon_url)
         self.status.setText("" if self.cards else t('Ничего не нашлось. Попробуй другое слово или категорию.'))
         self.more_btn.setVisible(len(hits) == PAGE)
         anim.stagger(new)
+
+    def _paint_install_button(self, card):
+        project_id = card.project.id
+        installed = project_id in self.installed_projects
+        card.install_btn.setEnabled(self.installing is None and not installed)
+        if installed:
+            text = t("Установлено")
+        elif self.installing == project_id:
+            text = t("Устанавливаю…")
+        else:
+            text = t("Установить")
+        card.install_btn.setText(text)
+        card.install_btn.setAccessibleName(t("{action}: {title}", action=text, title=card.project.title))
+
+    def set_install_state(self, active, *, installed=None, note=""):
+        self.installing = active
+        if installed is not None:
+            self.installed_projects.add(installed)
+        self.install_note.setText(note)
+        self.install_note.setVisible(bool(note))
+        for card in self.cards:
+            self._paint_install_button(card)
 
     def _icon(self, card: ResultCard, url: str) -> None:
         dest = self.ctx.lay.cache / "icons" / hashlib.sha1(url.encode()).hexdigest()
@@ -549,18 +587,29 @@ class Browser(QWidget):
             anim.fade_slide_in(self.detail, dx=30, ms=240)
 
     def close_detail(self) -> None:
+        self.detail._seq += 1
+        self.detail.plan = None
         self.detail.hide()
+        for card in self.cards:
+            card.set_selected(False)
+
+    def _clear_cards(self):
+        for card in self.cards:
+            card.setParent(None)
+            card.deleteLater()
+        self.cards.clear()
+        self.more_btn.hide()
 
     def reset(self) -> None:
         self._seq += 1
-        for c in self.cards:
-            c.setParent(None)
-            c.deleteLater()
-        self.cards = []
+        self.close_detail()
+        self.installed_projects.clear()
+        self.target.clear()
+        self.install_note.hide()
+        self.status.clear()
+        self._clear_cards()
         self.query.clear()
-        self.detail.hide()
-        for c in self.cards:
-            c.set_selected(False)
+        self.debounce.stop()
 
 
 def shiboken_alive(obj) -> bool:
@@ -575,6 +624,7 @@ class ContentPage(QWidget):
         self.rows: list[ItemRow] = []
         self._filter = "all"
         self._updates = {}
+        self._install_target = None
         lay = vbox(self, (8, 4, 0, 0), 14)
         head = hbox(None, (0, 0, 0, 0), 12)
         col = vbox(None, (0, 0, 0, 0), 2)
@@ -583,7 +633,7 @@ class ContentPage(QWidget):
         self.subtitle = label("", 10.5, role="muted")
         col.addWidget(self.subtitle)
         head.addLayout(col, 1)
-        self.find_btn = AccentButton(t('Найти новые'))
+        self.find_btn = AccentButton(t(FIND_TITLES[kind]))
         self.find_btn.clicked.connect(self.open_browser)
         head.addWidget(self.find_btn)
         lay.addLayout(head)
@@ -641,7 +691,8 @@ class ContentPage(QWidget):
         lib = self.library()
         lp = common.current_pack(self.ctx)
         vanilla = lp is not None and lp.loader == "vanilla" and self.kind == "mod"
-        self.find_btn.setVisible(not vanilla and self.stack.currentWidget() is not self.browser)
+        allowed = self.kind != "mod" or localpacks.can_add_mods(lp, self.ctx.settings, getattr(self.ctx, "catalog", None))
+        self.find_btn.setVisible(bool(lp and allowed and self.stack.currentWidget() is not self.browser))
         if vanilla:
             self.subtitle.setText(t('В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge.'))
             self._fill([])
@@ -718,9 +769,13 @@ class ContentPage(QWidget):
         if not common.confirm(self, t('Удаление'), t('Удалить {name}? Копия останется в снимках.', name=item.name), t('Удалить')):
             return
         lib = self.library()
-        jobs.run(lambda progress: lib.remove(item),
-                 on_done=lambda _: (self.reload(), self._toast(t('Удалено: {name}', name=item.name))),
-                 on_error=self._failed)
+        def removed(_):
+            self.browser.installed_projects.clear()
+            self.browser.set_install_state(self.browser.installing, note=self.browser.install_note.text())
+            self.reload()
+            self._toast(t('Удалено: {name}', name=item.name))
+
+        jobs.run(lambda progress: lib.remove(item), on_done=removed, on_error=self._failed)
 
     def _failed(self, e: BaseException) -> None:
         if isinstance(e, Locked):
@@ -730,6 +785,8 @@ class ContentPage(QWidget):
         self.reload()
 
     def open_browser(self) -> None:
+        if self.kind == "mod" and not self._can_install_mods():
+            return
         self.stack.setCurrentWidget(self.browser)
         anim.fade_slide_in(self.browser, dx=24, ms=220)
         self.find_btn.hide()
@@ -752,6 +809,9 @@ class ContentPage(QWidget):
         self.search.clear()
         self._fill([])
 
+    def _can_install_mods(self):
+        return localpacks.can_add_mods(common.current_pack(self.ctx), self.ctx.settings, getattr(self.ctx, "catalog", None))
+
     def _plan_for(self, project):
         lib = self.library()
         if lib is None:
@@ -760,56 +820,100 @@ class ContentPage(QWidget):
 
     def _install_planned(self, plan) -> None:
         lib = self.library()
-        if lib is None or not plan.items:
+        if self._install_target is not None or lib is None or not plan.items:
             return
-        names = [p.title for p, _ in plan.items]
+        if self.kind == "mod" and not self._can_install_mods():
+            return
+        project = plan.items[0][0]
+        self._begin_install(lib, project)
+        self._run_install(lib, plan, project)
+
+    def _begin_install(self, lib, project):
+        self._install_target = (lib.game_dir, project.id)
+        self.browser.show_page_link("")
+        self.browser.set_install_state(project.id, note=t('Проверяю {title}', title=project.title))
         self.browser.detail.install_btn.setEnabled(False)
-        self.browser.detail.deps.setText(t('Устанавливаю {x1}', x1=names[0]))
-        self._react("check")
-        jobs.run(lambda progress: lib.install(plan, self.kind, progress),
-                 on_done=lambda items: (self.browser.detail.deps.setText(t('Установлено: {x1}.', x1=', '.join(names))),
-                                        self._toast(t('Установлено: {x1}.', x1=', '.join(names))), self._react("nod")),
-                 on_error=lambda e: (self.browser.detail.deps.setText(_error_text(e)), self._react("idle")),
-                 on_progress=lambda name, cur, mx: self.browser.detail.deps.setText(
-                     t('Скачиваю {name}', name=name) + (f", {round(100 * cur / mx)} %" if mx else "")))
 
     def install(self, project) -> None:
         lib = self.library()
-        if lib is None:
-            return
-        self.browser.status.setText(t('Проверяю {title}', title=project.title))
-        self.browser.show_page_link("")
         source = self.browser.provider()
-        jobs.run(lambda progress: lib.plan_install(project.id, self.kind, source=source),
-                 on_done=lambda plan: self._confirm_install(lib, plan), on_error=self._install_failed)
-
-    def _confirm_install(self, lib: Library, plan) -> None:
-        names = [p.title for p, _ in plan.items]
-        text = t('Будет установлено: {x1}.', x1=names[0])
-        if len(names) > 1:
-            text += t(' Зависимости: {deps}.', deps=", ".join(names[1:]))
-        if not common.confirm(self, t('Установка'), text, t('Установить')):
-            self.browser.status.setText("")
+        if self._install_target is not None or lib is None or source is None:
             return
-        self.browser.status.setText(t('Устанавливаю {x1}', x1=names[0]))
+        if self.kind == "mod" and not self._can_install_mods():
+            return
+        self._begin_install(lib, project)
+        jobs.run(lambda progress: lib.plan_install(project.id, self.kind, source=source),
+                 on_done=lambda plan: self._install_ready(lib, plan, project),
+                 on_error=lambda error: self._finish_install(lib, project, error=error))
+
+    def _install_ready(self, lib, plan, project):
+        if not plan.items:
+            self._finish_install(lib, project, error=NotAvailable(project.title))
+            return
+        if self.kind != "mod":
+            names = [p.title for p, _ in plan.items]
+            text = t('Будет установлено: {x1}.', x1=names[0])
+            if len(names) > 1:
+                text += t(' Зависимости: {deps}.', deps=", ".join(names[1:]))
+            if not common.confirm(self, t('Установка'), text, t('Установить')):
+                self._finish_install(lib, project, cancelled=True)
+                return
+        self._run_install(lib, plan, project)
+
+    def _run_install(self, lib, plan, project):
+        names = [p.title for p, _ in plan.items]
+        note = t('Устанавливаю {x1}', x1=names[0])
+        if len(names) > 1:
+            note += t(' Зависимости: {deps}.', deps=", ".join(names[1:]))
+        self.browser.set_install_state(project.id, note=note)
         self._react("check")
-        jobs.run(lambda progress: lib.install(plan, self.kind, progress),
-                 on_done=lambda items: (self.browser.status.setText(t('Установлено: {x1}.', x1=', '.join(names))),
-                                        self._toast(t('Установлено: {x1}.', x1=', '.join(names))), self._react("nod")),
-                 on_error=lambda e: (self._react("idle"), self._install_failed(e)),
-                 on_progress=lambda name, cur, mx: self.browser.status.setText(
-                     t('Скачиваю {name}', name=name) + (f", {round(100 * cur / mx)} %" if mx else "")))
+
+        def progress(name, cur, total):
+            status = t('Скачиваю {name}', name=name) + (f", {round(100 * cur / total)} %" if total else "")
+            self.browser.install_note.setText(status)
+
+        jobs.run(lambda update: lib.install(plan, self.kind, update),
+                 on_done=lambda _: self._finish_install(lib, project, names=names),
+                 on_error=lambda error: self._finish_install(lib, project, error=error),
+                 on_progress=progress)
+
+    def _finish_install(self, lib, project, *, names=(), error=None, cancelled=False):
+        self._install_target = None
+        active = self.library()
+        same_pack = active is not None and active.game_dir == lib.game_dir
+        installed = (error is None and not cancelled) or isinstance(error, AlreadyInstalled)
+        self.browser.set_install_state(None, installed=project.id if same_pack and installed else None)
+        detail = self.browser.detail
+        if same_pack and detail.project and detail.project.id == project.id:
+            detail.install_btn.setEnabled(not installed and detail.plan is not None)
+            if names:
+                detail.deps.setText(t('Установлено: {x1}.', x1=', '.join(names)))
+            elif error is not None:
+                detail.deps.setText(_error_text(error))
+        if names:
+            self._toast(t('Установлено: {x1}.', x1=', '.join(names)))
+            self._react("nod")
+            if same_pack and self.stack.currentWidget() == self.listing:
+                self.reload()
+        elif error is not None:
+            if same_pack:
+                self._install_failed(error)
+            else:
+                self._toast(_error_text(error), "error")
+            self._react("idle")
 
     def _install_failed(self, e: BaseException) -> None:
         if isinstance(e, NotDistributable):
-            self.browser.status.setText(t('{name}: автор запретил скачивание через сторонние программы. Скачай файл на странице мода и положи в папку mods.', name=e.name))
+            note = t('{name}: автор запретил скачивание через сторонние программы. Скачай файл на странице мода и положи в папку mods.', name=e.name)
             self.browser.show_page_link(e.page_url)
         elif isinstance(e, AlreadyInstalled):
-            self.browser.status.setText(t('{name} уже установлен.', name=e.name))
+            note = t('{name} уже установлен.', name=e.name)
         elif isinstance(e, NotAvailable):
-            self.browser.status.setText(t('Для этой версии Minecraft нет подходящего файла.'))
+            note = t('Для этой версии Minecraft нет подходящего файла.')
         else:
-            self.browser.status.setText(_error_text(e))
+            note = _error_text(e)
+        self.browser.install_note.setText(note)
+        self.browser.install_note.show()
 
     def check_updates(self) -> None:
         lib = self.library()

@@ -115,8 +115,8 @@ jobs:
         with:
           name: .NET Launcher ${{ steps.version.outputs.number }}
           body_path: CHANGELOG.md
-          prerelease: true
-          make_latest: false
+          prerelease: ${{ contains(steps.version.outputs.number, '-') }}
+          make_latest: ${{ contains(steps.version.outputs.number, '-') && 'false' || 'true' }}
           fail_on_unmatched_files: true
           files: |
             downloads/NET-Launcher-Setup.exe

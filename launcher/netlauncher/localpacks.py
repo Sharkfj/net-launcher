@@ -125,3 +125,50 @@ def locked(lp: LocalPack, settings, catalog) -> bool:
     official = lp.official or (catalog is not None and catalog.get(lp.id) is not None)
     author = bool(getattr(settings, "author_mode", False) and getattr(settings, "github_token", ""))
     return official and not author
+
+
+def can_add_mods(lp: LocalPack | None, settings, catalog) -> bool:
+    return bool(lp and lp.loader in {"fabric", "quilt", "forge", "neoforge"} and not locked(lp, settings, catalog))
+
+
+def test_copy(lay: Layout, source: LocalPack, name: str, include_worlds: bool = False, *, reserved=()) -> LocalPack:
+    """Copy playable content into a separate personal pack, publishing it only when complete."""
+    import shutil
+    import tempfile
+    from dataclasses import replace
+
+    from netlauncher.author import new_pack_id
+
+    original = game_dir(lay, source.id)
+    if not (original / PACK_FILE).is_file():
+        raise FileNotFoundError(source.id)
+    folders = ["mods", "resourcepacks", "shaderpacks", "config", "defaultconfigs",
+               "kubejs", "scripts", "datapacks"]
+    if include_worlds:
+        folders.append("saves")
+
+    def linked(path):
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+
+    def ignore_links(directory, names):
+        return [entry for entry in names if linked(Path(directory) / entry)]
+
+    with tempfile.TemporaryDirectory(dir=lay.instances, prefix=".copy-") as scratch:
+        stage = Path(scratch) / "pack"
+        stage.mkdir()
+        for folder in folders:
+            entry = original / folder
+            if entry.is_dir() and not linked(entry):
+                shutil.copytree(entry, stage / folder, ignore=ignore_links)
+        for filename in ("options.txt", "optionsof.txt"):
+            entry = original / filename
+            if entry.is_file() and not linked(entry):
+                shutil.copy2(entry, stage / filename)
+
+        taken = set(reserved) | {entry.name for entry in lay.instances.iterdir()}
+        pack = replace(source, id=new_pack_id(name, taken), name=name, official=False, server="")
+        meta = stage / PACK_FILE
+        meta.parent.mkdir()
+        meta.write_text(json.dumps(asdict(pack), ensure_ascii=False, indent=1), encoding="utf-8")
+        stage.rename(game_dir(lay, pack.id))
+    return pack

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from netlauncher import snapshots
+from netlauncher.curseforge import CurseForge
 from netlauncher.modmeta import JarMeta, read_jar, sha1_file
 from netlauncher.modrinth import Modrinth, MrProject, MrVersion, search_loader
 from netlauncher.net import Http
@@ -62,6 +63,7 @@ class Item:
 class InstallPlan:
     items: list[tuple[MrProject, MrVersion]]
     skipped: list[str] = field(default_factory=list)
+    curseforge: CurseForge | None = None
 
 
 @dataclass
@@ -167,13 +169,16 @@ class Library:
         projects = src.projects([pid for pid, _ in chosen] + skipped)
         items = [(projects[pid], v) for pid, v in chosen if pid in projects]
         skipped_names = [projects[pid].slug if pid in projects else pid for pid in skipped]
-        return InstallPlan(items, skipped_names)
+        return InstallPlan(items, skipped_names, src if isinstance(src, CurseForge) else None)
 
-    def _fetch(self, v: MrVersion, progress: Progress | None, label: str) -> Path:
+    def _fetch(self, v: MrVersion, progress: Progress | None, label: str, curseforge: CurseForge | None = None) -> Path:
         f = v.primary_file
         dest = self.cache_dir / "downloads" / f.filename
         cb = (lambda done, total: progress(label, done, total)) if progress else None
-        return self.http.download(f.url, dest, sha1=f.sha1 or None, sha512=f.sha512 or None, progress=cb)
+        checks = dict(sha1=f.sha1 or None, sha512=f.sha512 or None, progress=cb)
+        if curseforge is not None:
+            return curseforge.download_file(v.project_id, v.id, f.url, dest, **checks)
+        return self.http.download(f.url, dest, **checks)
 
     def install(self, plan: InstallPlan, kind: Kind, progress: Progress | None = None) -> list[Item]:
         if not plan.items:
@@ -184,7 +189,7 @@ class Library:
         existing_ids = self._installed_mod_ids() if kind == "mod" else set()
         out = []
         for idx, (proj, v) in enumerate(plan.items):
-            tmp = self._fetch(v, progress, proj.title)
+            tmp = self._fetch(v, progress, proj.title, plan.curseforge)
             if kind == "mod":
                 meta = read_jar(tmp)
                 if meta and meta.mod_ids and meta.mod_ids[0] in existing_ids:

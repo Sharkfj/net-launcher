@@ -23,7 +23,7 @@ from netlauncher.catalog import resolve
 resolve_catalog = partial(resolve, report_offline=True)
 from netlauncher.importer import find_instances, import_instance, read_versions
 from netlauncher import coop
-from netlauncher.launch import GameProcess, LaunchSpec, LogProgress, Stage, apply_fullscreen, build_command, crash_info
+from netlauncher.launch import GameProcess, LaunchSpec, LogProgress, Stage, apply_fullscreen, build_command, crash_info, shareable_crash_details
 from netlauncher.localpacks import LocalPack
 from netlauncher.net import HashMismatch, HttpError, Offline
 from netlauncher.pack import MrPack, add_manual, apply_update, load_state, plan_update
@@ -372,7 +372,7 @@ class ManualPanel(QWidget):
         self.setAcceptDrops(True)
         lay = vbox(self, (8, 0, 8, 0), 12)
         lay.addStretch(1)
-        lay.addWidget(label(t('Один файл нужно скачать вручную'), 22, 650, display=True))
+        lay.addWidget(label(t('Файлы для ручной загрузки'), 22, 650, display=True))
         self.text = label("", 11, role="muted", wrap=True)
         lay.addWidget(self.text)
         row = hbox()
@@ -402,7 +402,8 @@ class ManualPanel(QWidget):
             self.finished.emit()
             return
         m = self.missing[0]
-        self.text.setText(t('{name} нельзя скачать автоматически: автор запретил перезаливать мод. Скачай файл {name2} со страницы мода, лаунчер проверит его и положит на место.', name=m.name, name2=Path(m.path).name))
+        self.text.setText(t('Осталось файлов: {count}. Скачай {name} и добавь его сюда. Лаунчер проверит версию файла.',
+                            count=len(self.missing), name=Path(m.path).name))
         self.open_btn.setEnabled(bool(m.page_url))
 
     def _open(self):
@@ -410,7 +411,7 @@ class ManualPanel(QWidget):
             QDesktopServices.openUrl(QUrl(self.missing[0].page_url))
 
     def _pick(self):
-        path, _ = QFileDialog.getOpenFileName(self, t('Файл мода'), str(Path.home() / "Downloads"), t('Моды (*.jar)'))
+        path, _ = QFileDialog.getOpenFileName(self, t('Файл мода'), str(Path.home() / "Downloads"), t('Файлы сборки (*.jar *.zip)'))
         if path:
             self.accept_file(Path(path))
 
@@ -633,6 +634,9 @@ class PackPanel(QWidget):
         top_row.addWidget(self.switch)
         self.new_btn = GhostButton(t('Новая сборка'))
         top_row.addWidget(self.new_btn)
+        self.mods_btn = GhostButton(t("Добавить моды"))
+        self.mods_btn.hide()
+        top_row.addWidget(self.mods_btn)
         top_row.addStretch(1)
         left.addLayout(top_row)
         left.addSpacing(6)
@@ -680,8 +684,10 @@ class PackPanel(QWidget):
         self.crash_title = label(t('Игра закрылась с ошибкой'), 12.5, 650, role="danger")
         self.crash_text = label("", 10.5, role="muted", wrap=True)
         crow = hbox(None, (0, 6, 0, 0), 8)
+        self.crash_copy = GhostButton(t("Скопировать отчёт"))
         self.crash_open = GhostButton(t('Открыть отчёт'))
         self.crash_hide = GhostButton(t('Скрыть'))
+        crow.addWidget(self.crash_copy)
         crow.addWidget(self.crash_open)
         crow.addWidget(self.crash_hide)
         crow.addStretch(1)
@@ -782,8 +788,9 @@ class HomePage(QWidget):
         self.empty.install_entry.connect(self.install_entry)
         self.empty.import_from.connect(self.import_instance)
         self.empty.create.connect(self.open_creator)
-        self.manual.finished.connect(self.refresh)
+        self.manual.finished.connect(self._manual_finished)
         self.panel.new_btn.clicked.connect(self.open_creator)
+        self.panel.mods_btn.clicked.connect(self._add_mods)
         self.panel.switch.picked.connect(self.pick_pack)
         self.panel.play_btn.installEventFilter(self)
         self.creator.cancel.connect(self.refresh)
@@ -793,6 +800,7 @@ class HomePage(QWidget):
         self.panel.server_btn.clicked.connect(self._server)
         self.panel.update_btn.clicked.connect(self._update)
         self.panel.crash_open.clicked.connect(self._open_report)
+        self.panel.crash_copy.clicked.connect(self._copy_crash_report)
         self.panel.crash_hide.clicked.connect(self.panel.crash_box.hide)
         self.panel.slim.toggled.connect(self._slim_changed)
         self.panel.skin_upload.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(ELY_SKIN_UPLOAD)))
@@ -868,10 +876,16 @@ class HomePage(QWidget):
         self._set_scene(lp, animate=getattr(self, "_switching", False))
         self._set_mode("pack")
 
+    def _add_mods(self):
+        pack = self.current_pack()
+        if pack and hasattr(self.window, "open_mod_browser"):
+            self.window.open_mod_browser(pack.id)
+
     def _show_pack(self, lp: LocalPack) -> None:
         p = self.panel
         packs = localpacks.list_installed(self.ctx.lay)
         p.switch.set_packs(packs, lp)
+        p.mods_btn.setVisible(localpacks.can_add_mods(lp, self.ctx.settings, self.catalog))
         p.set_title(lp.name)
         p.desc.setText(lp.description)
         p.desc.setVisible(bool(lp.description))
@@ -1067,10 +1081,8 @@ class HomePage(QWidget):
         if self.window and hasattr(self.window, "set_offline"):
             self.window.set_offline(offline)
         self.startup_done = True
-        if self.window is not None and hasattr(self.window, "offer_update"):
-            self.window.offer_update(cat)
-            if self.window.current_page() == "official":
-                self.window.page("official").refresh_cards()
+        if self.window and hasattr(self.window, "current_page") and self.window.current_page() == "official":
+            self.window.page("official").refresh_cards()
         if self.mode() in ("pack", "empty"):
             self.refresh()
 
@@ -1103,6 +1115,25 @@ class HomePage(QWidget):
         self.ctx.save()
         return pack.index, gd, plan.manual_missing
 
+    def begin_shared_repair(self, pack, card):
+        from netlauncher.chat_packs import repair_shared_files
+
+        self.busy.start(t("Проверяю файлы сборки…"))
+        self._set_mode("install")
+        jobs.run(repair_shared_files, self.ctx, pack, card, on_done=self._installed,
+                 on_error=self._install_failed, on_progress=self.busy.progress)
+
+    def _manual_finished(self):
+        directory = self.manual.game_dir
+        self.refresh()
+        if directory:
+            self._continue_invitation(directory.name)
+
+    def _continue_invitation(self, pack_id):
+        friends = getattr(self.window, "_pages", {}).get("friends")
+        if friends is not None and hasattr(friends, "resume_join"):
+            friends.resume_join(pack_id)
+
     def _installed(self, result) -> None:
         index, gd, missing = result
         if missing:
@@ -1110,6 +1141,7 @@ class HomePage(QWidget):
             self._set_mode("manual")
         else:
             self.refresh()
+            self._continue_invitation(gd.name)
 
     def _install_failed(self, e: BaseException) -> None:
         self.refresh()
@@ -1268,6 +1300,7 @@ class HomePage(QWidget):
             cmd = build_command(spec)
             self.proc = self.process_factory(gd)
             self._started_at = time.time()
+            self._last_launch = (lp, game.java)
             self._session_log = coop.SessionLog(self.proc.log_path)
             self._hosting = lp if not server and not acc.offline and acc.provider == "ely" and (gd / coop.OPT_IN).is_file() else None
             self._announced = set()
@@ -1350,7 +1383,8 @@ class HomePage(QWidget):
         if code == 0:
             self.panel.status.setText("")
             return
-        lp = self.current_pack()
+        lp, java = getattr(self, "_last_launch", (self.current_pack(), None))
+        self._crash_context = (lp, java, code)
         info = crash_info(localpacks.game_dir(self.ctx.lay, lp.id), self._started_at - 5) if lp else None
         if info:
             parts = [info.description, info.cause]
@@ -1366,6 +1400,38 @@ class HomePage(QWidget):
         self.panel.status.setText("")
         self.panel.crash_box.show()
         anim.fade_slide_in(self.panel.crash_box, dx=0, dy=8, ms=240)
+
+    def _copy_crash_report(self):
+        from PySide6.QtWidgets import QApplication
+        from netlauncher import __version__
+        import subprocess
+
+        pack, java, code = self._crash_context
+        lines = [f".NET Launcher {__version__}", t("Код выхода: {code}", code=code)]
+        if pack:
+            lines.append(f"Minecraft {pack.mc_version} · {pack.loader} {pack.loader_version}".rstrip())
+            log = localpacks.game_dir(self.ctx.lay, pack.id) / "logs" / "latest.log"
+            lines.extend(shareable_crash_details(log, self._crash_report))
+
+        def java_version(_):
+            if java:
+                jdk = java.with_name("java.exe") if java.name.lower() == "javaw.exe" else java
+                try:
+                    result = subprocess.run([str(jdk), "-version"], capture_output=True, timeout=3, text=True)
+                    import re
+                    version = re.search(r'\bversion\s+"([0-9][a-zA-Z0-9.+_-]*)"', result.stderr + result.stdout)
+                    if version:
+                        return version[1]
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            return t("не определена")
+
+        def copied(version):
+            QApplication.clipboard().setText("\n".join(lines[:2] + [f"Java {version}"] + lines[2:]))
+            if self.window:
+                self.window.toast(t("Отчёт скопирован."))
+
+        jobs.run(java_version, on_done=copied)
 
     def _open_report(self) -> None:
         if self._crash_report:

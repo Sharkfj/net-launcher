@@ -1,3 +1,13 @@
+# .NET Launcher 0.3.5
+
+- Open the mod catalog directly from a compatible pack on the home screen or in the pack list. Install mods and their dependencies from search results in one click.
+- Shared packs show their Minecraft version, loader and file count in chat. Before installation, review the expected download size and files that need to be added manually.
+- An invitation can start installation of the matching official pack or open the sender's chat. The launcher continues joining after the requested pack is ready and can restore missing files in shared packs.
+- Create a separate test copy of a pack. Copy worlds only if you select the option.
+- Copy a crash report with the Minecraft, loader and Java versions, exit code and Java exception classes.
+- Use the download button next to the launcher version to check GitHub for a newer release and download the matching Windows or Linux installer.
+- CurseForge downloads can use the configured friends Worker for mods, dependencies and chat packs. Players signed in through Ely.by do not need their own CurseForge key.
+
 # .NET Launcher 0.3.2 beta 2
 
 ## Packs and worlds

@@ -118,3 +118,36 @@ def test_curseforge_via_proxy_sends_no_key(home):
     assert len(calls) == 3
     assert all(c.method == "GET" and c.headers == {"Authorization": "Bearer session"} for c in calls)
     assert calls[0].params["gameVersion"] == "1.21.1"
+
+
+def test_install_curseforge_mod_and_dependency_with_only_a_friends_session(home):
+    from netlauncher.auth_ely import Account
+    from netlauncher.catalog import parse
+    from netlauncher.curseforge import for_context
+    from netlauncher.friends import ELY_JOIN
+    from netlauncher.library import Library
+    from netlauncher.ui.app import make_context
+
+    base = "https://friends.example"
+    http = FakeHttp({
+        ELY_JOIN: None,
+        base + "/v1/auth/challenge": {"server_id": "sid"},
+        base + "/v1/auth/verify": {"token": "session", "name": "Player"},
+        base + "/cf/mods/123": {"data": mod()},
+        base + "/cf/mods/123/files": {"data": [cffile(1, deps=[77])]},
+        base + "/cf/mods/77": {"data": mod(77)},
+        base + "/cf/mods/77/files": {"data": [cffile(2, mid=77)]},
+    }, downloads={
+        base + "/cf/mods/123/files/1/download": b"jar",
+        base + "/cf/mods/77/files/2/download": b"jar",
+    })
+    ctx = make_context(home, http)
+    ctx.accounts.save(Account("Player", "abc", "tok", "ct"))
+    ctx.catalog = parse({"friends": {"url": base}})
+    library = Library(home.instances / "mine", home.snapshots / "mine", ctx.modrinth,
+                      http, home.cache, "1.21.1", "neoforge")
+    plan = library.plan_install("cf:123", "mod", source=for_context(ctx))
+    assert [item.path.name for item in library.install(plan, "mod")] == ["f1.jar", "f2.jar"]
+    downloads = [call for call in http.calls if call.method == "DOWNLOAD"]
+    assert [call.url for call in downloads] == list(http.downloads)
+    assert all(call.headers == {"Authorization": "Bearer session"} for call in downloads)

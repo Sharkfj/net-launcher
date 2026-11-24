@@ -58,8 +58,8 @@ class FakeHttp:
             return 200, json.dumps(value).encode()
         return 200, value if isinstance(value, bytes) else b""
 
-    def download(self, url, dest: Path, sha1=None, sha512=None, progress: Callable | None = None):
-        self.calls.append(Call("DOWNLOAD", url))
+    def download(self, url, dest: Path, sha1=None, sha512=None, progress: Callable | None = None, *, headers=None, sha256=None):
+        self.calls.append(Call("DOWNLOAD", url, headers=headers))
         if self.offline:
             raise Offline(url)
         if url not in self.downloads:
@@ -70,6 +70,8 @@ class FakeHttp:
         if sha1 and hashlib.sha1(data).hexdigest() != sha1:
             raise HashMismatch(dest)
         if sha512 and hashlib.sha512(data).hexdigest() != sha512:
+            raise HashMismatch(dest)
+        if sha256 and hashlib.sha256(data).hexdigest() != sha256:
             raise HashMismatch(dest)
         dest.write_bytes(data)
         if progress:

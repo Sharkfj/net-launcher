@@ -1,5 +1,5 @@
 #ifndef LauncherVersion
-  #define LauncherVersion "0.3.2"
+  #define LauncherVersion "0.3.5"
 #endif
 [Setup]
 AppId=Sharkfj.NETLauncher

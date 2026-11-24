@@ -6,6 +6,7 @@ from netlauncher.i18n import t
 
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from netlauncher.modmeta import read_jar, sha1_file
 from netlauncher.modrinth import MrFile, MrProject, MrVersion, ProjectDetails
@@ -85,6 +86,16 @@ class CurseForge:
 
     def file(self, project_id, file_id) -> dict:
         return self._get(f"mods/{_num(project_id)}/files/{_num(file_id)}") or {}
+
+    def download_file(self, project_id, file_id, url: str, dest: Path, **checks) -> Path:
+        if self.session is not None and self.proxy == self.session.base + "/cf":
+            return self.session.curseforge_download(_num(project_id), _num(file_id), dest, **checks)
+        if self.key and not self.proxy:
+            target = urlsplit(url)
+            if target.scheme != "https" or target.netloc not in {"edge.forgecdn.net", "mediafilez.forgecdn.net"}:
+                raise ValueError("Invalid CurseForge download URL")
+            return self.http.download(url, dest, headers={"x-api-key": self.key}, **checks)
+        return self.http.download(url, dest, **checks)
 
     def _h(self) -> dict:
         return {"x-api-key": self.key, "Accept": "application/json"}

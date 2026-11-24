@@ -75,14 +75,18 @@ def test_scene_fills_window(win):
     assert win.scene.geometry() == win.rect()
 
 
-def test_update_chip(win, monkeypatch):
-    opened = []
-    monkeypatch.setattr("netlauncher.ui.window.QDesktopServices.openUrl", lambda url: opened.append(url.toString()))
-    assert not win.update_chip.isVisible()
-    win.show_update("0.3.1", "https://example.net/dl")
-    assert win.update_chip.isVisible() and win.update_chip.text() == "Вышла 0.3.1"
-    win.update_chip.clicked.emit()
-    assert opened == ["https://example.net/dl"]
+def test_update_button_checks_github_and_reports_no_update(win, monkeypatch):
+    from netlauncher import updater
+
+    checks, notices = [], []
+    monkeypatch.setattr(updater, "download_update", lambda *args: checks.append(args))
+    monkeypatch.setattr(win, "toast", lambda message, *_: notices.append(message))
+    assert win.rail.update.isVisible()
+    assert win.rail.update.accessibleName() == "Обновить лаунчер"
+    win.rail.update.click()
+    pump(100)
+    assert checks and win.rail.update.isEnabled()
+    assert notices == ["Новых релизов для этой системы нет."]
 
 
 def test_page_switch_animates_and_lands(win):

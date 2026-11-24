@@ -6,9 +6,9 @@ from netlauncher.i18n import t
 
 from typing import Callable
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QUrl, Signal
+from PySide6.QtCore import QProcess, QPoint, QRectF, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QLinearGradient, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QStackedWidget,
                                QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from netlauncher.ui import anim, icons
@@ -138,7 +138,17 @@ class Rail(QWidget):
         self.version.setProperty("role", "faint")
         self.version.setFont(font(7.5, 450))
         self.version.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        lay.addWidget(self.version)
+        version_row = QHBoxLayout()
+        version_row.setSpacing(2)
+        version_row.addStretch()
+        version_row.addWidget(self.version)
+        self.update = QPushButton("↓")
+        self.update.setFixedSize(19, 20)
+        self.update.setToolTip(t("Обновить лаунчер"))
+        self.update.setAccessibleName(self.update.toolTip())
+        version_row.addWidget(self.update)
+        version_row.addStretch()
+        lay.addLayout(version_row)
         self.account_name = ""
         self.active = ""
         self.tip: RailTip | None = None
@@ -203,17 +213,6 @@ class Rail(QWidget):
         if self.active:
             self.layout().activate()
             self.set_active(self.active, animate=False)
-
-
-class UpdateChip(QPushButton):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFont(font(9, 520))
-        self.setStyleSheet("QPushButton { background: rgba(76,154,255,0.12); color: #a9cbff; border: 1px solid rgba(76,154,255,0.32);"
-                           " border-radius: 12px; padding: 4px 12px; } QPushButton:hover { background: rgba(76,154,255,0.2); }")
-        self.url = ""
-        self.hide()
 
 
 class WindowButton(_HoverMixin, QAbstractButton):
@@ -282,9 +281,7 @@ class MainWindow(QWidget):
         self.offline_badge = QLabel(t('Нет интернета'))
         self.offline_badge.hide()
         bar.addWidget(self.offline_badge)
-        self.update_chip = UpdateChip()
-        self.update_chip.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.update_chip.url)))
-        bar.addWidget(self.update_chip)
+        self.rail.update.clicked.connect(self.download_launcher_update)
         self.faces = QHBoxLayout()
         self.faces.setSpacing(6)
         bar.addLayout(self.faces)
@@ -366,6 +363,17 @@ class MainWindow(QWidget):
             pack.show_pack(pack_id, section)
         self._show("pack", "pack", shown=False)
 
+    def open_mod_browser(self, pack_id: str) -> None:
+        from netlauncher import localpacks
+
+        pack = localpacks.get(self.ctx.lay, pack_id)
+        if not localpacks.can_add_mods(pack, self.ctx.settings, getattr(self.ctx, "catalog", None)):
+            return
+        self.open_pack(pack_id, "mods")
+        page = self._pages["pack"]
+        if hasattr(page, "sections"):
+            page.sections["mods"].open_browser()
+
     def open_page(self, name: str) -> None:
         if name in SECTIONS:
             pack = self._pages["pack"]
@@ -442,25 +450,70 @@ class MainWindow(QWidget):
         self.offline = on
         self.offline_badge.setVisible(on)
 
-    def show_update(self, version: str, url: str) -> None:
-        self.update_chip.setText(t('Вышла {v}', v=version))
-        self.update_chip.url = url
-        self.update_chip.show()
-
-    def offer_update(self, cat) -> None:
-        """Show the corner chip when the catalog names a newer launcher than this one."""
+    def download_launcher_update(self):
         import sys
-        from netlauncher import __version__
-        if cat is None or not getattr(cat, "launcher_version", ""):
-            return
+        from netlauncher import __version__, updater
+        from netlauncher.ui import jobs
 
-        def key(v: str):
-            return tuple(int(x) if x.isdigit() else 0 for x in v.split("."))
-        if key(cat.launcher_version) <= key(__version__):
+        button = self.rail.update
+        if not button.isEnabled():
             return
-        url = cat.launcher_urls.get("windows" if sys.platform.startswith("win") else "linux", "")
-        if url:
-            self.show_update(cat.launcher_version, url)
+        button.setEnabled(False)
+        button.setText("…")
+        button.setToolTip(t("Проверяю релизы GitHub…"))
+
+        def reset():
+            button.setEnabled(True)
+            button.setText("↓")
+            button.setToolTip(t("Обновить лаунчер"))
+
+        def finished(path):
+            reset()
+            if path is None:
+                self.toast(t("Новых релизов для этой системы нет."))
+                return
+            answer = QMessageBox.question(
+                self, t("Обновить лаунчер"), t("Обновление скачано. Запустить установщик?"))
+            if answer != QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+                return
+            if sys.platform == "win32":
+                ok, _ = QProcess.startDetached(str(path), [])
+                if ok:
+                    self.toast(t("Установщик запущен."))
+                else:
+                    self.toast(t("Не удалось запустить установщик."), "error")
+            else:
+                process = QProcess(self)
+                button.setEnabled(False)
+
+                def installed(code, status):
+                    reset()
+                    if code == 0 and status == QProcess.ExitStatus.NormalExit:
+                        self.toast(t("Обновление установлено. Перезапусти лаунчер."))
+                    else:
+                        self.toast(t("Установка обновления завершилась ошибкой."), "error")
+                    process.deleteLater()
+
+                def could_not_start(error):
+                    if error == QProcess.ProcessError.FailedToStart:
+                        reset()
+                        self.toast(t("Не удалось запустить установщик."), "error")
+                        process.deleteLater()
+
+                process.finished.connect(installed)
+                process.errorOccurred.connect(could_not_start)
+                process.start("sh", [str(path)])
+
+        def failed(error):
+            reset()
+            self.toast(t("Не удалось скачать обновление: {error}", error=str(error)), "error")
+
+        def progress(_, done, total):
+            button.setToolTip(t("Скачиваю обновление: {percent} %", percent=min(100, 100 * done // max(total, 1))))
+
+        jobs.run(updater.download_update, self.ctx.http, self.ctx.lay.cache, __version__,
+                 on_done=finished, on_error=failed, on_progress=progress)
 
     # ---------- painting ----------
     def _shape(self) -> QPainterPath:

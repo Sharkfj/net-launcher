@@ -182,3 +182,29 @@ def crash_info(game_dir: Path, since: float) -> CrashInfo | None:
     s = re.search(r"Suspected Mods?:\s*\n((?:[ \t]+\S.*\n?)+)", text)
     suspects = ", ".join(x.strip() for x in s.group(1).splitlines() if x.strip()) if s else ""
     return CrashInfo(description, cause, suspects, rep)
+
+
+_EXCEPTION_NAME = re.compile(r"^(?:Caused by: |Suppressed: )?((?:[\w$]+\.)+[\w$]*(?:Exception|Error))(?::|$)")
+
+
+def shareable_crash_details(log: Path, report: Path | None = None) -> list[str]:
+    """Extract JVM exception classes only, excluding messages, arguments and filesystem paths."""
+    details = []
+    for path in (report, log):
+        if path is None:
+            continue
+        try:
+            with path.open("rb") as f:
+                size = f.seek(0, 2)
+                f.seek(max(0, size - 128 * 1024))
+                lines = f.read().decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            line = line.strip()
+            if "]:" in line:
+                line = line.split("]:", 1)[1].strip()
+            match = _EXCEPTION_NAME.match(line)
+            if match:
+                details.append(match[1])
+    return list(dict.fromkeys(details[-12:]))

@@ -43,7 +43,8 @@ class Http(Protocol):
     def request(self, method: str, url: str, *, data: bytes | None = None,
                 headers: dict | None = None) -> tuple[int, bytes]: ...
     def download(self, url: str, dest: Path, sha1: str | None = None, sha512: str | None = None,
-                 progress: Callable[[int, int], None] | None = None) -> Path: ...
+                 progress: Callable[[int, int], None] | None = None, *,
+                 headers: dict | None = None, sha256: str | None = None) -> Path: ...
 
 
 class RequestsHttp:
@@ -82,30 +83,35 @@ class RequestsHttp:
         r = self._send(method, url, data=data, headers=headers)
         return r.status_code, r.content
 
-    def download(self, url, dest, sha1=None, sha512=None, progress=None):
+    def download(self, url, dest, sha1=None, sha512=None, progress=None, *, headers=None, sha256=None):
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
         part = dest.with_name(dest.name + ".part")
-        h1, h512 = hashlib.sha1(), hashlib.sha512()
+        h1, h512, h256 = hashlib.sha1(), hashlib.sha512(), hashlib.sha256()
         try:
-            r = self._send("GET", url, stream=True)
-            total = int(r.headers.get("Content-Length") or 0)
-            done = 0
-            with open(part, "wb") as f:
-                for chunk in r.iter_content(CHUNK):
-                    f.write(chunk)
-                    h1.update(chunk)
-                    h512.update(chunk)
-                    done += len(chunk)
-                    if progress:
-                        progress(done, total or done)
+            with self._send("GET", url, stream=True, headers=headers, allow_redirects=not headers) as r:
+                if r.status_code != 200:
+                    raise HttpError(r.status_code, url)
+                total = int(r.headers.get("Content-Length") or 0)
+                done = 0
+                with open(part, "wb") as f:
+                    for chunk in r.iter_content(CHUNK):
+                        f.write(chunk)
+                        h1.update(chunk)
+                        h512.update(chunk)
+                        if sha256:
+                            h256.update(chunk)
+                        done += len(chunk)
+                        if progress:
+                            progress(done, total or done)
         except requests.RequestException as e:
             part.unlink(missing_ok=True)
             raise Offline(url) from e
         except BaseException:
             part.unlink(missing_ok=True)
             raise
-        if (sha1 and h1.hexdigest() != sha1.lower()) or (sha512 and h512.hexdigest() != sha512.lower()):
+        if ((sha1 and h1.hexdigest() != sha1.lower()) or (sha512 and h512.hexdigest() != sha512.lower())
+                or (sha256 and h256.hexdigest() != sha256.lower())):
             part.unlink(missing_ok=True)
             raise HashMismatch(dest)
         os.replace(part, dest)

@@ -67,6 +67,14 @@ class FriendsClient:
         return r.get("name", acc.name)
 
     def _call(self, path: str, body: dict | None = None, *, params: dict | None = None) -> dict:
+        def request(url, headers):
+            if body is None:
+                return self.http.get_json(url, params=params, headers=headers)
+            return self.http.post_json(url, body, headers=headers)
+
+        return self._authenticated(path, request)
+
+    def _authenticated(self, path, request):
         for attempt in (0, 1):
             with self._session_lock:
                 self._active_account()
@@ -75,9 +83,7 @@ class FriendsClient:
                 token = self.token
             headers = {"Authorization": f"Bearer {token}"}
             try:
-                if body is None:
-                    return self.http.get_json(f"{self.base}{path}", params=params, headers=headers)
-                return self.http.post_json(f"{self.base}{path}", body, headers=headers)
+                return request(f"{self.base}{path}", headers)
             except HttpError as e:
                 if e.status != 401 or attempt == 1:
                     raise
@@ -95,6 +101,10 @@ class FriendsClient:
     # ---------- api ----------
     def curseforge_get(self, path: str, params: dict | None = None) -> dict:
         return self._call("/cf/" + path, params=params)
+
+    def curseforge_download(self, project_id: int, file_id: int, dest: Path, **checks) -> Path:
+        path = f"/cf/mods/{project_id}/files/{file_id}/download"
+        return self._authenticated(path, lambda url, headers: self.http.download(url, dest, headers=headers, **checks))
 
     def issue_key(self) -> dict:
         return self._call("/v1/support/keys", {})

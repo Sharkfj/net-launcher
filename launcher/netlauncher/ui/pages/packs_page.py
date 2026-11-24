@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QScrollArea, QWidget
+from PySide6.QtWidgets import QLabel, QMenu, QScrollArea, QWidget
 
 from netlauncher import localpacks
 from netlauncher.i18n import t
+from netlauncher.ui import jobs
 from netlauncher.ui.pages import common
+from netlauncher.ui.pages.home import _error_text
 from netlauncher.ui.pages.common import hbox, label, vbox
 from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard
 
@@ -36,11 +38,17 @@ class PackRow(GlassCard):
         col.addWidget(self.meta)
         row.addLayout(col, 1)
         self.play_btn = AccentButton(t('Играть'))
-        self.open_btn = GhostButton(t('Открыть'))
-        self.folder_btn = GhostButton(t('Открыть папку'))
-        self.delete_btn = GhostButton(t('Удалить'), danger=True)
-        for b in (self.play_btn, self.open_btn, self.folder_btn, self.delete_btn):
-            row.addWidget(b)
+        self.mods_btn = GhostButton(t("Добавить моды"))
+        self.open_btn = GhostButton(t("Открыть сборку"))
+        self.more_btn = GhostButton(t("Ещё"))
+        menu = QMenu(self.more_btn)
+        self.folder_action = menu.addAction(t("Открыть папку"))
+        self.copy_action = menu.addAction(t("Тестовая копия"))
+        menu.addSeparator()
+        self.delete_action = menu.addAction(t("Удалить"))
+        self.more_btn.setMenu(menu)
+        for button in (self.play_btn, self.mods_btn, self.open_btn, self.more_btn):
+            row.addWidget(button)
 
 
 class PacksPage(QWidget):
@@ -67,6 +75,7 @@ class PacksPage(QWidget):
         sa.setFrameShape(QScrollArea.Shape.NoFrame)
         outer.addWidget(sa, 1)
         self.rows: list[PackRow] = []
+        self.copying = False
         self.refresh()
 
     def on_shown(self) -> None:
@@ -88,10 +97,15 @@ class PacksPage(QWidget):
             official = is_official(lp)
             r = PackRow(lp, official)
             r.play_btn.clicked.connect(lambda _=False, pid=lp.id: self._play(pid))
+            r.mods_btn.setVisible(localpacks.can_add_mods(lp, self.ctx.settings, cat))
+            if self.window is not None and hasattr(self.window, "open_mod_browser"):
+                r.mods_btn.clicked.connect(lambda _=False, pid=lp.id: self.window.open_mod_browser(pid))
             r.open_btn.clicked.connect(lambda _=False, pid=lp.id: self._open(pid))
-            r.folder_btn.clicked.connect(lambda _=False, pid=lp.id: QDesktopServices.openUrl(
+            r.folder_action.triggered.connect(lambda _=False, pid=lp.id: QDesktopServices.openUrl(
                 QUrl.fromLocalFile(str(localpacks.game_dir(self.ctx.lay, pid)))))
-            r.delete_btn.clicked.connect(lambda _=False, lp=lp: self._delete(lp))
+            r.copy_action.setEnabled(not self.copying)
+            r.copy_action.triggered.connect(lambda _=False, lp=lp: self._copy(lp))
+            r.delete_action.triggered.connect(lambda _=False, lp=lp: self._delete(lp))
             self.list.insertWidget(self.list.count() - 1, r)
             self.rows.append(r)
 
@@ -123,6 +137,36 @@ class PacksPage(QWidget):
         home = self.window.page("home")
         if hasattr(home, "open_creator"):
             home.open_creator()
+
+    def _copy(self, lp: localpacks.LocalPack) -> None:
+        if self.copying or self.window is None:
+            return
+        home = self.window.page("home")
+        if getattr(home, "proc", None) is not None:
+            self.window.toast(t("Закрой Minecraft перед копированием сборки."), "error")
+            return
+        ok, worlds = common.confirm_with_option(
+            self, t("Тестовая копия"),
+            t("Создать отдельную сборку с модами и настройками из «{name}»?", name=lp.name),
+            t("Создать копию"), t("Копировать миры"), False)
+        if not ok:
+            return
+        self.copying = True
+        self.refresh()
+        reserved = {entry.id for entry in self.ctx.catalog.packs} if self.ctx.catalog else set()
+        name = t("{name} · тест", name=lp.name)
+
+        def finished(pack=None, error=None):
+            self.copying = False
+            self.refresh()
+            if error is not None:
+                self.window.toast(_error_text(error), "error")
+                return
+            self.window.toast(t("Тестовая копия готова."))
+            self._open(pack.id)
+
+        jobs.run(lambda _: localpacks.test_copy(self.ctx.lay, lp, name, worlds, reserved=reserved),
+                 on_done=finished, on_error=lambda error: finished(error=error))
 
     def _delete(self, lp: localpacks.LocalPack) -> None:
         ok, keep = common.confirm_with_option(

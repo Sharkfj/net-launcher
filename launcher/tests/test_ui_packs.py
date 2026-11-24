@@ -68,7 +68,7 @@ def test_delete_current_pack_selects_other(win):
     w.open_page("packs")
     page = w.page("packs")
     row = next(r for r in page.rows if r.pack_id == "mine")
-    row.delete_btn.click()
+    row.delete_action.trigger()
     pump(50)
     assert localpacks.get(ctx.lay, "mine") is None
     assert ctx.settings.selected_pack == "net"
@@ -80,7 +80,7 @@ def test_open_folder_opens_game_dir(win, monkeypatch):
     opened = []
     monkeypatch.setattr("netlauncher.ui.pages.packs_page.QDesktopServices.openUrl", lambda url: opened.append(url.toLocalFile()))
     w.open_page("packs")
-    w.page("packs").rows[1].folder_btn.click()
+    w.page("packs").rows[1].folder_action.trigger()
     assert Path(opened[0]) == localpacks.game_dir(ctx.lay, "mine")
 
 
@@ -142,6 +142,24 @@ def test_packs_row_open_shows_pack_page(win):
     w.open_page("packs")
     w.page("packs").rows[1].open_btn.click()
     assert w.current_page() == "pack" and w.page("pack").pack_id == "mine"
+
+
+def test_add_mods_opens_the_selected_packs_catalog(win):
+    w, ctx = win
+    w.open_page("packs")
+    official, personal = w.page("packs").rows
+    assert official.mods_btn.isHidden()
+    assert personal.mods_btn.text() == "Добавить моды" and not personal.mods_btn.isHidden()
+    personal.mods_btn.click()
+    page = w.page("pack")
+    mods = page.sections["mods"]
+    assert page.pack_id == personal.pack_id == ctx.settings.selected_pack
+    assert page.current_section() == "mods" and mods.stack.currentWidget() is mods.browser
+    assert mods.browser.target.text() == "Сборка «Выживание» · Minecraft 1.21.1 · Fabric"
+    w.open_page("home")
+    w.page("home").panel.mods_btn.click()
+    assert w.current_page() == "pack" and mods.stack.currentWidget() is mods.browser
+
 
 
 def _png(path, color):

@@ -8,8 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox,
                                QFileDialog, QLabel, QLineEdit, QListWidget, QMenu,
                                QFrame, QScrollArea, QToolButton, QWidget)
@@ -33,6 +33,19 @@ def plain(text, size=10.5, weight=400, role=None):
     widget.setTextFormat(Qt.TextFormat.PlainText)
     widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return widget
+
+
+def pack_summary(card):
+    version = card.get("version") or "—"
+    loader = " ".join(part for part in (card.get("loader"), card.get("loader_version")) if part)
+    details = f'Minecraft {card.get("mc", "—")} · {loader or "Vanilla"} · v{version}'
+    if "files" in card:
+        count = len(card["files"])
+        mods = sum(f["path"].startswith("mods/") for f in card["files"])
+        sizes = [f.get("size") for f in card["files"]]
+        size = human_size(sum(sizes)) if all(type(value) is int for value in sizes) else t("размер неизвестен")
+        details += "\n" + t("Модов: {mods} · Файлов: {count} · {size}", mods=mods, count=count, size=size)
+    return details
 
 
 def error_text(error):
@@ -446,8 +459,14 @@ class ChatPage(QWidget):
                 btn.clicked.connect(lambda _,m=mid:self.delete(m))
                 row.addWidget(btn)
             layout.addLayout(row)
-            layout.addWidget(plain(msg["text"]))
             kind = msg["kind"]
+            if kind in ("pack", "official"):
+                name, _, info = msg["text"].partition("\n")
+                layout.addWidget(plain(name, 12, 650))
+                if info:
+                    layout.addWidget(plain(info, 9.5, role="muted"))
+            else:
+                layout.addWidget(plain(msg["text"]))
             if kind in ("image","file"):
                 if (msg.get("expires") or 0)<=time.time():
                     layout.addWidget(plain(t("Срок хранения файла истёк."),9,role="muted"))
@@ -544,11 +563,27 @@ class ChatPage(QWidget):
             self.status.setText(t("Сначала создай или установи сборку."))
             return
         pack = self.pick(t("Поделиться сборкой"),options)
-        if pack:
-            def send(c,r):
-                kind,card = chat_packs.make_card(ctx,pack)
-                return c.chat("post",room=r,kind=kind,card=card,text=pack.name,nonce=uuid.uuid4().hex)
-            self.post(send)
+        if not pack or not self.active:
+            return
+        room = self.active
+        self.status.setText(t("Готовлю карточку сборки…"))
+
+        def ready(result):
+            if self.active != room:
+                return
+            kind, card = result
+            dialog, layout = chat_sheet(self, card["name"])
+            layout.addWidget(plain(pack_summary(card), role="muted"))
+            send = AccentButton(t("Отправить сборку"))
+            send.clicked.connect(dialog.accept)
+            layout.addWidget(send, 0, Qt.AlignmentFlag.AlignLeft)
+            self.status.clear()
+            if dialog.exec() and self.active == room:
+                text = card["name"] + "\n" + pack_summary(card)
+                self.post(lambda c, r: c.chat("post", room=r, kind=kind, card=card, text=text,
+                                              nonce=uuid.uuid4().hex))
+
+        self.chats.run(lambda _: chat_packs.make_card(ctx, pack), ready)
 
     def manage_members(self):
         rec = next((r for r in self.chats.rooms if r["id"]==self.active),None)
@@ -626,28 +661,57 @@ class ChatPage(QWidget):
         except ValueError as e:
             self.chats.error(e)
             return
+        self.status.setText(t("Проверяю файлы сборки…"))
+        room = self.active
+        self.chats.run(lambda _: chat_packs.plan_card(ctx, card),
+                       lambda sources: self._confirm_pack(card, settings, sources) if self.active == room else None)
+
+    def _confirm_pack(self, card, settings, sources):
+        ctx = self.chats.ctx
+        self.status.clear()
         dialog, layout = chat_sheet(self, card["name"])
-        layout.addWidget(plain("Minecraft "+card["mc"]+" · "+card["loader"]+" "+card["loader_version"]))
+        layout.addWidget(plain(pack_summary(card), role="muted"))
+        manual = [chat_packs.manual_file(f) for f in card["files"] if f["path"] not in sources]
+        sizes = [entry[2] for entry in sources.values()]
+        amount = (human_size(sum(sizes)) if sum(sizes) else "0 MB") if all(type(value) is int for value in sizes) else t("размер неизвестен")
+        layout.addWidget(plain(t("Автоматическая загрузка: {count} · {size}", count=len(sources), size=amount)))
+        if manual:
+            layout.addWidget(plain(t("Скачать вручную: {count}", count=len(manual)), weight=600))
         files = QListWidget()
-        files.addItems([f["path"] for f in card["files"]]+sorted(settings))
+        files.addItems([t("Вручную · {file}", file=file.path) for file in manual]
+                       + [f["path"] for f in card["files"] if f["path"] in sources] + sorted(settings))
+        for row, file in enumerate(manual):
+            item = files.item(row)
+            item.setData(Qt.ItemDataRole.UserRole, file.page_url)
+            item.setToolTip(t("Открыть страницу файла"))
+
+        def open_file(item):
+            url = item.data(Qt.ItemDataRole.UserRole)
+            if url:
+                QDesktopServices.openUrl(QUrl(url))
+
+        files.itemActivated.connect(open_file)
         files.setAccessibleName(t("Моды и настройки сборки"))
         layout.addWidget(files)
         install = AccentButton(t("Установить"))
         install.clicked.connect(dialog.accept)
-        layout.addWidget(install)
-        dialog.resize(480,400)
-        if dialog.exec():
+        layout.addWidget(install, 0, Qt.AlignmentFlag.AlignLeft)
+        dialog.resize(500, 430)
+        room = self.active
+        if dialog.exec() and self.active == room:
             self.status.setText(t("Устанавливаю сборку…"))
+
             def installed(result):
-                lp,index,manual = result
+                lp, index, missing = result
                 ctx.settings.selected_pack = lp.id
                 ctx.save()
                 if self.chats.window:
                     self.chats.leave()
                     self.chats.window.open_page("home")
                     home = self.chats.window.page("home")
-                    home._installed((index,localpacks.game_dir(ctx.lay,lp.id),manual))
-            self.chats.run(lambda _:chat_packs.install_card(ctx,card,lambda *args:None),installed)
+                    home._installed((index, localpacks.game_dir(ctx.lay, lp.id), missing))
+
+            self.chats.run(lambda _: chat_packs.install_card(ctx, card, lambda *args: None, sources=sources), installed)
 
     def closeEvent(self,event):
         self.select(None)

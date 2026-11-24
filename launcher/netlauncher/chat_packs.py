@@ -7,11 +7,13 @@ import re
 import tempfile
 import zlib
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from netlauncher import author, curseforge, localpacks
 from netlauncher.i18n import t
+from netlauncher.friends import NotConfigured
 from netlauncher.modmeta import sha1_file
+from netlauncher.net import HttpError, Offline
 from netlauncher.pack import ManualFile, PackIndex
 
 KINDS = {"mods": ".jar", "resourcepacks": ".zip", "shaderpacks": ".zip"}
@@ -43,7 +45,8 @@ def _config_path(key):
 def make_card(ctx, pack):
     cat = ctx.catalog
     if pack.official or cat and cat.get(pack.id):
-        return "official", {"name":pack.name,"id":pack.id}
+        return "official", {"name": pack.name, "id": pack.id, "version": pack.version,
+                            "mc": pack.mc_version, "loader": pack.loader, "loader_version": pack.loader_version}
     root = localpacks.game_dir(ctx.lay, pack.id)
     paths = []
     for folder, ext in KINDS.items():
@@ -58,10 +61,13 @@ def make_card(ctx, pack):
     hits = cf.match_files(missing) if cf else {}
     files = []
     for p,h in hashes.items():
-        entry = {"path":p.relative_to(root).as_posix(),"sha1":h}
+        entry = {"path": p.relative_to(root).as_posix(), "sha1": h, "size": p.stat().st_size}
         if p in hits:
             project, f = hits[p]
             entry.update(cf_project=project["id"], cf_file=f["id"])
+            page = cf.page(project, f["id"])
+            if page:
+                entry["page"] = page
         files.append(entry)
     settings, total = {}, 0
     for path in [root/"options.txt", *(p for folder in ("config","defaultconfigs")
@@ -106,6 +112,8 @@ def validate(card):
         _check(len(components)==2 and components[0] in KINDS and _valid_part(components[1]) and
                components[1].lower().removesuffix(".disabled").endswith(KINDS[components[0]]) and
                re.fullmatch(r"[a-f0-9]{40}",f["sha1"]) and f["path"].lower() not in used)
+        if "size" in f:
+            _check(type(f["size"]) is int and 0 <= f["size"] < 2**53)
         used.add(f["path"].lower())
         if "cf_project" in f or "cf_file" in f:
             _check(all(type(f.get(key)) is int and 0<f[key]<2**53 for key in ("cf_project","cf_file")))
@@ -122,29 +130,71 @@ def validate(card):
         raise ValueError(t("В карточке сборки неверные данные.")) from None
 
 
-def install_card(ctx, card, progress):
-    settings = validate(card)
+def plan_card(ctx, card):
+    """Resolve the sources with the receiving player's catalogue and connection."""
+    validate(card)
     files = card["files"]
     mr = ctx.modrinth.versions_by_hash([f["sha1"] for f in files])
     cf = curseforge.for_context(ctx) if any("cf_file" in f for f in files) else None
+    sources = {}
+    for f in files:
+        digest = f["sha1"]
+        version = mr.get(digest)
+        match = next((item for item in version.files if item.sha1 == digest), None) if version else None
+        if match and match.url:
+            sources[f["path"]] = (match.url, None, f.get("size", getattr(match, "size", None)))
+        elif cf and "cf_file" in f:
+            try:
+                remote = cf.file(f["cf_project"], f["cf_file"])
+            except (HttpError, Offline, NotConfigured):
+                continue
+            if (remote.get("downloadUrl") and
+                    any(h.get("algo") == 1 and h.get("value", "").lower() == digest
+                        for h in remote.get("hashes") or [])):
+                sources[f["path"]] = (remote["downloadUrl"], cf, f.get("size", remote.get("fileLength")))
+    return sources
+
+
+def manual_file(f):
+    name = f["path"].split("/")[-1]
+    page = f.get("page")
+    if isinstance(page, str) and page.startswith("https://www.curseforge.com/minecraft/"):
+        url = urlsplit(page)
+        if url.netloc == "www.curseforge.com" and re.fullmatch(r"/minecraft/[a-z-]+/[^/]+/files/\d+", url.path):
+            return ManualFile(f["path"], f["sha1"], name, page)
+    url = "https://www.curseforge.com/minecraft/search?search=" + quote(name)
+    return ManualFile(f["path"], f["sha1"], name, url)
+
+
+def _fetch_files(ctx, files, stage, sources, progress):
     missing = []
+    for index, f in enumerate(files):
+        fp, digest = f["path"], f["sha1"]
+        source = sources.get(fp)
+        if source is None:
+            missing.append(manual_file(f))
+        else:
+            url, cf, _ = source
+            if cf is None:
+                ctx.http.download(url, stage / fp, sha1=digest)
+            else:
+                try:
+                    cf.download_file(f["cf_project"], f["cf_file"], url, stage / fp, sha1=digest)
+                except (HttpError, Offline, NotConfigured):
+                    missing.append(manual_file(f))
+        progress(fp.split("/")[-1], index + 1, len(files))
+    return missing
+
+
+def install_card(ctx, card, progress, *, sources=None):
+    settings = validate(card)
+    files = card["files"]
+    if sources is None:
+        sources = plan_card(ctx, card)
     with tempfile.TemporaryDirectory(dir=ctx.lay.instances,prefix=".chat-") as temp:
         stage = Path(temp) / "pack"
         stage.mkdir()
-        for index, f in enumerate(files):
-            fp, digest = f["path"], f["sha1"]
-            name = fp.split("/")[1]
-            version = mr.get(digest)
-            url = next((mf.url for mf in version.files if mf.sha1==digest),"") if version else ""
-            if not url and cf and "cf_file" in f:
-                remote = cf.file(f["cf_project"],f["cf_file"])
-                if any(h.get("algo")==1 and h.get("value","").lower()==digest for h in remote.get("hashes",[])):
-                    url = remote.get("downloadUrl") or ""
-            if url:
-                ctx.http.download(url,stage/fp,sha1=digest)
-            else:
-                missing.append(ManualFile(fp,digest,name,"https://www.curseforge.com/minecraft/search?search="+quote(name)))
-            progress(name,index+1,len(files))
+        missing = _fetch_files(ctx, files, stage, sources, progress)
         for key,value in settings.items():
             target = stage/key
             target.parent.mkdir(parents=True,exist_ok=True)
@@ -158,6 +208,45 @@ def install_card(ctx, card, progress):
         from dataclasses import asdict
         (net/"pack.json").write_text(json.dumps(asdict(lp),ensure_ascii=False),encoding="utf-8")
         (net/"shared-id").write_text(card["id"],encoding="utf-8")
+        (net/"shared-card.json").write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
         stage.rename(ctx.lay.instances/pack_id)
     index = PackIndex(lp.name,lp.version,lp.mc_version,lp.loader,lp.loader_version,[],missing)
     return lp,index,missing
+def shared_files_to_repair(ctx, pack):
+    directory = localpacks.game_dir(ctx.lay, pack.id)
+    try:
+        card = json.loads((directory / ".net" / "shared-card.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    validate(card)
+    missing = []
+    for file in card["files"]:
+        path = directory / file["path"]
+        if not path.resolve().is_relative_to(directory.resolve()) or path.is_symlink():
+            raise ValueError(t("В карточке сборки неверные данные."))
+        if not path.is_file() or sha1_file(path) != file["sha1"]:
+            missing.append(file)
+    return dict(card, files=missing) if missing else None
+
+
+def repair_shared_files(ctx, pack, card, progress):
+    """Fetch verified replacements before touching the installed copy."""
+    validate(card)
+    sources = plan_card(ctx, card)
+    directory = localpacks.game_dir(ctx.lay, pack.id)
+    for f in card["files"]:
+        target = directory / f["path"]
+        if not target.resolve().is_relative_to(directory.resolve()) or target.is_symlink():
+            raise ValueError(t("В карточке сборки неверные данные."))
+    with tempfile.TemporaryDirectory(dir=ctx.lay.instances, prefix=".repair-") as scratch:
+        stage = Path(scratch)
+        missing = _fetch_files(ctx, card["files"], stage, sources, progress)
+        for f in card["files"]:
+            incoming = stage / f["path"]
+            if not incoming.is_file():
+                continue
+            target = directory / f["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            incoming.replace(target)
+    index = PackIndex(pack.name, pack.version, pack.mc_version, pack.loader, pack.loader_version, [], missing)
+    return index, directory, missing

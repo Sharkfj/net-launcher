@@ -106,7 +106,7 @@ def test_locked_toggle_disabled(env):
     assert (gd / "mods" / "mine.jar.disabled").exists()
 
 
-def test_install_flow_shows_plan(env):
+def test_mods_install_directly_from_search_results(env):
     w, ctx, gd, confirms = env
     w.open_page("mods")
     page = w.page("mods")
@@ -118,7 +118,9 @@ def test_install_flow_shows_plan(env):
     assert card.title.text() == "Shoulder Surfing" and card.meta.text() == "13 млн загрузок"
     card.install_btn.click()
     pump(until=lambda: (gd / "mods" / "ss.jar").exists())
-    assert confirms and confirms[0] == "Будет установлено: Shoulder Surfing."
+    assert not confirms
+    pump(until=lambda: card.install_btn.text() == "Установлено")
+    assert not card.install_btn.isEnabled()
     assert (gd / "mods" / "ss.jar").exists()
 
 

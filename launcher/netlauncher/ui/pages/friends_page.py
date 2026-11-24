@@ -6,10 +6,12 @@ from netlauncher.i18n import t
 
 import time
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
+import shiboken6
 
-from netlauncher import coop, localpacks, skin
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QLineEdit, QMenu, QMessageBox, QScrollArea, QStackedWidget, QWidget
+
+from netlauncher import chat_packs, coop, localpacks, skin
 from netlauncher.friends import NotConfigured
 from netlauncher.net import HttpError
 from netlauncher.ui import anim, jobs, profile_style
@@ -286,7 +288,7 @@ class FriendsPage(QWidget):
         for f in sorted(friends, key=lambda f: (not f.get("online"), f["name"].lower())):
             r = FriendRow(f)
             r.join.connect(lambda f: self._play(f.get("pack", ""), f.get("server", ""),
-                                                pack_id=f.get("pack_id", ""), version=f.get("pack_version", "")))
+                                                pack_id=f.get("pack_id", ""), version=f.get("pack_version", ""), peer=f["name"]))
             r.chat.connect(self.chats.direct)
             if hasattr(self.window, "open_profile"):
                 r.profile.connect(self.window.open_profile)
@@ -342,23 +344,102 @@ class FriendsPage(QWidget):
             identity = getattr(self.window, "game_pack", {})
         self._run(lambda c: c.invite(name, pack, server, **identity))
 
-    def _play(self, pack: str, server: str, dismiss_from: str | None = None, pack_id="", version="") -> None:
+    def _play(self, pack: str, server: str, dismiss_from: str | None = None, pack_id="", version="", peer="") -> None:
+        if self.window is None:
+            return
+        home = self.window.page("home")
+        if getattr(home, "proc", None) is not None or home.mode() in ("install", "busy", "manual"):
+            self.notice.setText(t("Сначала заверши текущую установку или закрой Minecraft."))
+            return
+        self.pending_join = None
+        request = object()
+        self._join_request = request
         match = coop.invited_pack(self.ctx.lay, pack, pack_id, version)
-        if pack_id and version and match is None:
-            self.notice.setText(t('Установи сборку «{pack}» версии {version}, чтобы присоединиться.',
-                                  pack=pack, version=version))
-            return
+        peer = peer or dismiss_from
         if pack and match is None:
-            self.notice.setText(t('Сначала установи сборку «{pack}» на главной.', pack=pack))
+            self._offer_missing_pack(pack, server, dismiss_from, pack_id, version, peer)
             return
+        if match is None or not server:
+            self._launch_join(match, server, dismiss_from)
+            return
+
+        self.notice.setText(t("Проверяю готовность сборки…"))
+
+        def checked(card):
+            if not shiboken6.isValid(self) or self._join_request is not request:
+                return
+            if getattr(home, "proc", None) is not None or home.mode() in ("install", "manual"):
+                return
+            self.notice.clear()
+            if card is None:
+                self._launch_join(match, server, dismiss_from)
+                return
+            answer = QMessageBox.question(
+                self, t("Сборка нужна для игры"),
+                t("Файлов нужно скачать заново: {count}. Восстановить сборку и подключиться?",
+                  count=len(card["files"])))
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._remember_join(pack, server, dismiss_from, pack_id, version)
+            self.window.open_page("home")
+            home.begin_shared_repair(match, card)
+
+        jobs.run(lambda _: chat_packs.shared_files_to_repair(self.ctx, match),
+                 on_done=checked, on_error=lambda error: self.notice.setText(_error_text(error)))
+
+    def _remember_join(self, pack, server, dismiss_from, pack_id, version):
+        account = self.ctx.accounts.load()
+        self.pending_join = (pack, server, dismiss_from, pack_id, version, account.uuid if account else None)
+
+    def _offer_missing_pack(self, pack, server, dismiss_from, pack_id, version, peer):
+        catalog = self.ctx.catalog
+        entry = None
+        if catalog:
+            entry = catalog.get(pack_id) if pack_id else next((p for p in catalog.packs if p.name == pack), None)
+        exact = entry and entry.name == pack and (not version or entry.version == version)
+        box = QMessageBox(self)
+        box.setWindowTitle(t("Сборка нужна для игры"))
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(t("Для подключения установи «{name}» {version}.", name=pack, version=version).rstrip())
+        action = None
+        if exact:
+            action = box.addButton(t("Установить и подключиться"), QMessageBox.ButtonRole.AcceptRole)
+        elif peer:
+            box.setInformativeText(t("Попроси друга отправить эту сборку в чат. Подключение продолжится после установки."))
+            action = box.addButton(t("Открыть чат"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if action is None or box.clickedButton() != action:
+            return
+        self._remember_join(pack, server, dismiss_from, pack_id, version)
+        if exact:
+            self.window.open_page("home")
+            self.window.page("home").install_entry(entry)
+        else:
+            self.chats.direct(peer)
+
+    def resume_join(self, installed_id):
+        pending = getattr(self, "pending_join", None)
+        if pending is None:
+            return
+        name, server, dismiss_from, source, version, account_id = pending
+        account = self.ctx.accounts.load()
+        if not account or account.uuid != account_id:
+            self.pending_join = None
+            return
+        pack = localpacks.get(self.ctx.lay, installed_id)
+        if pack and pack.name == name and (not version or pack.version == version) and (
+                not source or coop.source_id(self.ctx.lay, pack) == source):
+            self.pending_join = None
+            self._launch_join(pack, server, dismiss_from)
+
+    def _launch_join(self, match, server, dismiss_from):
         if match is not None:
             self.ctx.settings.selected_pack = match.id
             self.ctx.save()
         if dismiss_from:
             self._run(lambda c: c.dismiss(dismiss_from))
-        if self.window is not None:
-            home = self.window.page("home")
-            if hasattr(home, "refresh"):
-                home.refresh()
-            self.window.open_page("home")
-            home.play(server=server or None)
+        home = self.window.page("home")
+        home.refresh()
+        self.window.open_page("home")
+        home.play(server=server or None)
