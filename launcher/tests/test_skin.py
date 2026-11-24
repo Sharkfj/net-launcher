@@ -135,3 +135,125 @@ def test_fetch_force_bypasses_cache(tmp_path):
     n = len(http.calls)
     skin.fetch(http, "Shark", tmp_path, force=True)
     assert len(http.calls) > n
+
+
+def _flat_png(rgb=(128, 128, 128)):
+    from PySide6.QtCore import QBuffer, QIODevice
+    img = QImage(64, 64, QImage.Format.Format_ARGB32)
+    img.fill(QColor(*rgb))
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    img.save(buf, "PNG")
+    return bytes(buf.data())
+
+
+def _settle(r, seconds=3.0):
+    for _ in range(int(seconds * 30)):
+        r.step(1 / 30)
+
+
+def test_renderer_no_wave_or_walk(qapp):
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer()
+    for bad in ("wave", "walk", "greet"):
+        with pytest.raises(ValueError):
+            r.react(bad)
+
+
+def test_rim_light_tints_side_faces(qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainter
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer(Skin(_flat_png(), False))
+    _settle(r)
+    rect = QRectF(0, 0, 400, 600)
+    img = QImage(400, 600, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p = QPainter(img)
+    r.paint(p, rect)
+    p.end()
+    polys = {(f.part, f.name): f.poly for f in r.projected(rect) if f.layer == "base"}
+    assert ("head", "front") in polys and ("head", "left") in polys
+
+    def color_at(poly):
+        c = poly.boundingRect().center()
+        return img.pixelColor(int(c.x()), int(c.y()))
+    side, front = color_at(polys[("head", "left")]), color_at(polys[("head", "front")])
+    assert side.blue() - side.red() > front.blue() - front.red() + 25
+
+
+def test_tab_preset_reaches_camera(qapp):
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer()
+    r.set_tab("settings")
+    for _ in range(60):
+        r.step(0.05)
+    want = SkinRenderer.CAMERAS["settings"]
+    assert all(abs(a - b) < 0.5 for a, b in zip(r.camera(), want))
+
+
+def test_camera_and_pose_tables(qapp):
+    from netlauncher.ui.skinview import SkinRenderer
+    assert SkinRenderer.CAMERAS == {"home": (8.7, -7.9, 94, 4), "packs": (26.6, 0.9, 62.6, 9),
+                                    "official": (2.7, -15.9, 87.4, 6), "friends": (-15.6, -4.5, 89.6, 3),
+                                    "settings": (19.2, 2.3, 48.7, 11)}
+    assert {k: v["ry"] for k, v in SkinRenderer.POSES.items()} == {"home": -.42, "packs": -2.25, "official": -1.35,
+                                                                  "friends": -.08, "settings": -.85}
+
+
+def test_nod_returns_to_idle(qapp):
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer()
+    r.react("nod")
+    assert r.reaction == "nod"
+    _settle(r, 1.5)
+    assert r.reaction == "idle"
+
+
+def test_turn_head_returns_to_idle(qapp):
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer()
+    r.react("turn_head")
+    _settle(r, 2.0)
+    assert r.reaction == "idle"
+
+
+def test_missing_skin_uses_default(qapp):
+    from netlauncher.ui.skinview import SkinRenderer, default_skin
+    assert SkinRenderer(None).skin_png == default_skin().png
+
+
+def test_renderer_reuses_cached_image_when_still(qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainter
+    from netlauncher.ui.skinview import SkinRenderer
+    r = SkinRenderer()
+    _settle(r, 3.0)
+    img = QImage(300, 400, QImage.Format.Format_ARGB32_Premultiplied)
+    for _ in range(3):
+        img.fill(0)
+        p = QPainter(img)
+        r.paint(p, QRectF(0, 0, 300, 400))
+        p.end()
+    assert r.renders == 1
+    r.set_tab("settings")
+    for _ in range(10):
+        r.step(0.05)
+    p = QPainter(img)
+    r.paint(p, QRectF(0, 0, 300, 400))
+    p.end()
+    assert r.renders == 2
+
+
+def test_studio_animates_each_moving_frame(qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from netlauncher.ui.skinview import SkinRenderer
+    renderer = SkinRenderer()
+    image = QImage(240, 320, QImage.Format.Format_ARGB32_Premultiplied)
+    renderer.set_tab("packs")
+    with QPainter(image) as painter:
+        for _ in range(20):
+            renderer.step(.016)
+            renderer.paint(painter, QRectF(0, 0, 240, 320))
+    assert renderer.renders >= 18

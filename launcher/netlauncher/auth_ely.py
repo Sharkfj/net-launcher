@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import json
 import os
 import sys
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from netlauncher.net import Http, HttpError, Offline
@@ -20,6 +22,18 @@ class Account:
     uuid: str
     access_token: str
     client_token: str
+    offline: bool = False
+
+
+def valid_nick(name: str) -> bool:
+    return re.fullmatch(r"[A-Za-z0-9_]{3,16}", name) is not None
+
+
+def offline_account(name: str) -> Account:
+    if not valid_nick(name):
+        raise ValueError("Invalid Minecraft name")
+    digest = hashlib.md5(("OfflinePlayer:" + name).encode("utf-8"), usedforsecurity=False).digest()
+    return Account(name, uuid.UUID(bytes=digest, version=3).hex, "0", "", True)
 
 
 class BadCredentials(Exception):
@@ -86,6 +100,8 @@ class ElyAuth:
         return True
 
     def logout(self, acc: Account) -> None:
+        if acc.offline:
+            return
         try:
             self._post("invalidate", {"accessToken": acc.access_token, "clientToken": acc.client_token})
         except (HttpError, Offline):
@@ -116,22 +132,27 @@ class AccountStore:
         self.path.unlink(missing_ok=True)
 
 
-def ensure_valid(auth: ElyAuth, store: AccountStore) -> Account:
+def ensure_valid(auth: ElyAuth, store: AccountStore, *, disconnected: bool = False) -> Account:
     acc = store.load()
     if acc is None:
         raise NeedLogin()
+    if acc.offline:
+        return acc
+    local = replace(acc, access_token="0", client_token="", offline=True)
+    if disconnected:
+        return local
     try:
         if auth.validate(acc):
             return acc
     except (Offline, AuthUnavailable):
-        return acc  # no internet: let offline singleplayer start with the stored account
+        return local
     try:
         fresh = auth.refresh(acc)
     except (Offline, AuthUnavailable):
-        return acc
+        return local
     except HttpError as e:
         if e.status >= 500:
-            return acc
+            return local
         store.clear()
         raise NeedLogin() from e
     store.save(fresh)

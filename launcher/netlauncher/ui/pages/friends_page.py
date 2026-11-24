@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import time
 
-from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QLineEdit, QMenu, QScrollArea, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
 
-from netlauncher import localpacks, skin
+from netlauncher import coop, localpacks, skin
 from netlauncher.friends import NotConfigured
 from netlauncher.net import HttpError
-from netlauncher.ui import anim, jobs
+from netlauncher.ui import anim, jobs, profile_style
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
 from netlauncher.ui.pages.home import _error_text
+from netlauncher.ui.supporter import display_name, remember
 from netlauncher.ui.skinview import face
 from netlauncher.ui.widgets import AccentButton, Avatar, GhostButton, GlassCard
 
@@ -23,24 +26,26 @@ def _ago(ts: float) -> str:
     d = max(0, time.time() - ts)
     if d < 3600:
         m = max(1, int(d // 60))
-        return f"{m} мин назад"
+        return t('{m} мин назад', m=m)
     if d < 86400:
-        return f"{int(d // 3600)} ч назад"
+        return t('{x0} ч назад', x0=int(d // 3600))
     n = int(d // 86400)
-    return f"{n} {plural(n, 'день', 'дня', 'дней')} назад"
+    return t('{n} {x2} назад', n=n, x2=plural(n, 'день', 'дня', 'дней'))
 
 
 def status_text(f: dict) -> str:
     if not f.get("online"):
-        return "Не в сети" + (f", был {_ago(f['last_seen'])}" if f.get("last_seen") else "")
+        return t('Не в сети, был {ago}', ago=_ago(f['last_seen'])) if f.get("last_seen") else t('Не в сети')
     if f.get("status") == "playing":
-        text = f"Играет в {f.get('pack') or 'Minecraft'}"
-        return text + (f" на {f['server']}" if f.get("server") else "")
-    return "В сети, в лаунчере"
+        text = t('Играет в {x1}', x1=f.get('pack') or 'Minecraft')
+        return text + (t(' на {x1}', x1=f['server']) if f.get("server") else "")
+    return t('В сети, в лаунчере')
 
 
 class FriendRow(GlassCard):
+    profile = Signal(str)
     join = Signal(dict)
+    chat = Signal(str)
     invite = Signal(str)
     remove = Signal(str)
 
@@ -50,26 +55,49 @@ class FriendRow(GlassCard):
         row = hbox(self, (14, 10, 12, 10), 12)
         self.avatar = Avatar(38)
         self.avatar.set_name(self.name)
+        self.avatar.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.avatar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.avatar.setAccessibleName(t("Профиль игрока {name}", name=self.name))
+        self.avatar.setToolTip(self.avatar.accessibleName())
+        self.avatar.clicked.connect(lambda: self.profile.emit(self.name))
+        style = profile_style.clean(f.get("appearance") if f.get("supporter") else None)
+        self.avatar.set_supporter(f.get("supporter", False), style["frame"])
         row.addWidget(self.avatar)
         col = vbox(None, (0, 0, 0, 0), 1)
-        col.addWidget(label(self.name, 11, 580))
+        name_label = profile_style.PlayerName(11)
+        name_label.setText(display_name(self.name, f.get("supporter")))
+        name_label.set_appearance(style if f.get("supporter") else dict(style, font="sans"))
+        if f.get("supporter"):
+            name_label.setToolTip(t("Поддержка автора"))
+        name_row = hbox(spacing=4)
+        name_row.addWidget(name_label)
+        if profile_style.is_developer(f.get("profile_uuid")):
+            badge = profile_style.DeveloperBadge()
+            name_row.addWidget(badge)
+            badge.show()
+        name_row.addStretch(1)
+        col.addLayout(name_row)
         self.status = label(status_text(f), 9.5, role="muted" if f.get("online") else "faint")
         col.addWidget(self.status)
         row.addLayout(col, 1)
-        self.join_btn = AccentButton("Играть вместе")
+        write = GhostButton(t("Написать"))
+        write.clicked.connect(lambda:self.chat.emit(self.name))
+        row.addWidget(write)
+        self.join_btn = AccentButton(t('Играть вместе'))
         self.join_btn.clicked.connect(lambda: self.join.emit(self.f))
         self.join_btn.setVisible(bool(f.get("online") and f.get("status") == "playing" and f.get("server")))
         row.addWidget(self.join_btn)
-        self.invite_btn = GhostButton("Пригласить")
+        self.invite_btn = GhostButton(t('Пригласить'))
         self.invite_btn.clicked.connect(lambda: self.invite.emit(self.name))
         row.addWidget(self.invite_btn)
-        more = GhostButton("Ещё")
+        more = GhostButton(t('Ещё'))
         more.clicked.connect(lambda: self._menu(more))
         row.addWidget(more)
 
     def _menu(self, btn):
         m = QMenu(self)
-        m.addAction("Удалить из друзей", lambda: self.remove.emit(self.name))
+        m.addAction(t("Профиль"), lambda: self.profile.emit(self.name))
+        m.addAction(t('Удалить из друзей'), lambda: self.remove.emit(self.name))
         m.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
 
@@ -78,9 +106,9 @@ class RequestRow(GlassCard):
         super().__init__(parent, radius=14)
         self.name = name
         row = hbox(self, (16, 10, 12, 10), 10)
-        row.addWidget(label(f"{name} хочет добавить тебя в друзья", 10.5, 520), 1)
-        self.accept_btn = AccentButton("Принять")
-        self.decline_btn = GhostButton("Отклонить")
+        row.addWidget(label(t('{name} хочет добавить тебя в друзья', name=name), 10.5, 520), 1)
+        self.accept_btn = AccentButton(t('Принять'))
+        self.decline_btn = GhostButton(t('Отклонить'))
         row.addWidget(self.accept_btn)
         row.addWidget(self.decline_btn)
 
@@ -90,10 +118,10 @@ class InviteRow(GlassCard):
         super().__init__(parent, radius=14)
         self.inv = inv
         row = hbox(self, (16, 10, 12, 10), 10)
-        self.text = label(f"{inv['from']} зовёт играть в {inv.get('pack') or 'Minecraft'}", 10.5, 560)
+        self.text = label(t('{x0} зовёт играть в {x2}', x0=inv['from'], x2=inv.get('pack') or 'Minecraft'), 10.5, 560)
         row.addWidget(self.text, 1)
-        self.play_btn = AccentButton("Играть")
-        self.later_btn = GhostButton("Позже")
+        self.play_btn = AccentButton(t('Присоединиться'))
+        self.later_btn = GhostButton(t('Позже'))
         row.addWidget(self.play_btn)
         row.addWidget(self.later_btn)
 
@@ -107,21 +135,28 @@ class FriendsPage(QWidget):
         self.invite_rows: list[InviteRow] = []
         self._client = None
         self._client_url = None
-        outer = vbox(self, (8, 4, 0, 0), 12)
-        outer.addWidget(label("Друзья", 22, 650, display=True))
+        self.views = QStackedWidget()
+        vbox(self).addWidget(self.views)
+        directory = QWidget()
+        self.views.addWidget(directory)
+        outer = vbox(directory, (8, 4, 0, 0), 12)
+        outer.addWidget(label(t('Друзья'), 22, 650, display=True))
         self.subtitle = label("", 10.5, role="muted")
         outer.addWidget(self.subtitle)
         self.notice = label("", 10.5, role="muted", wrap=True)
         outer.addWidget(self.notice)
         add = hbox(None, (0, 0, 0, 0), 8)
         self.add_name = QLineEdit()
-        self.add_name.setPlaceholderText("Ник на Ely.by")
+        self.add_name.setPlaceholderText(t('Ник на Ely.by'))
         self.add_name.setMinimumWidth(280)
         self.add_name.returnPressed.connect(self.add_friend)
-        self.add_btn = AccentButton("Добавить в друзья")
+        self.add_btn = AccentButton(t('Добавить в друзья'))
         self.add_btn.clicked.connect(self.add_friend)
         add.addWidget(self.add_name)
         add.addWidget(self.add_btn)
+        self.chat_btn = GhostButton(t("Чаты"))
+        self.chat_btn.clicked.connect(lambda:self.chats.open())
+        add.addWidget(self.chat_btn)
         add.addStretch(1)
         self.add_row = QWidget()
         self.add_row.setLayout(add)
@@ -141,23 +176,37 @@ class FriendsPage(QWidget):
         self.timer.timeout.connect(self.tick)
         self.timer.start()
         self._faces: dict[str, object] = {}
+        from netlauncher.ui.pages.chat import Chats
+        self.chats = Chats(self)
         self._update_notice()
 
     # ---------- client ----------
     def client(self):
         url = self.ctx.friends_url()
-        if self._client is None or self._client_url != url:
-            self._client, self._client_url = self.ctx.friends(), url
+        acc = self.ctx.accounts.load()
+        key = (url, acc.uuid if acc and not getattr(acc,"offline",False) else "")
+        if self._client is None or self._client_url != key:
+            if self._client is not None:
+                self.chats.reset()
+                self._clear(self.rows)
+                self._clear(self.request_rows)
+                self._clear(self.invite_rows)
+                self.outgoing.clear()
+                self.subtitle.clear()
+            self._client, self._client_url = self.ctx.friends(), key
         return self._client
 
     def _update_notice(self) -> bool:
         configured = bool(self.ctx.friends_url())
-        self.add_row.setVisible(configured)
+        acc = self.ctx.accounts.load()
+        self.add_row.setVisible(bool(configured and acc and not getattr(acc,"offline",False)))
         if not configured:
-            self.notice.setText("Сервер друзей не подключён. Его адрес задаёт автор сборки в каталоге; "
-                                "если тебе дали адрес, впиши его в настройках, раздел «Лаунчер».")
-        elif self.ctx.accounts.load() is None:
-            self.notice.setText("Войди через Ely.by на главной, чтобы видеть друзей.")
+            self.notice.setText(t('Сервер друзей не подключён. Его адрес задаёт автор сборки в каталоге; если тебе дали адрес, впиши его в настройках, раздел «Лаунчер».'))
+        elif getattr(acc,"offline",False):
+            self.notice.setText(t("Друзья работают после входа через Ely.by."))
+            return False
+        elif acc is None:
+            self.notice.setText(t('Войди через Ely.by на главной, чтобы видеть друзей.'))
             return False
         else:
             self.notice.setText("")
@@ -167,22 +216,34 @@ class FriendsPage(QWidget):
         self.tick()
 
     def tick(self) -> None:
+        self.client()
         if not self._update_notice():
             return
         status, pack, server = getattr(self.window, "game_status", ("launcher", "", ""))
-        cl = self.client()
-        jobs.run(lambda progress: cl.presence(status, pack, server), on_done=self._show, on_error=self._failed)
+        identity = getattr(self.window, "game_pack", {})
+        self._run(lambda c: c.presence(status, pack, server, **identity))
 
-    def _run(self, fn) -> None:
-        jobs.run(lambda progress: fn(self.client()), on_done=self._show, on_error=self._failed)
+    def _run(self, fn, on_done=None) -> None:
+        cl = self.client()
+        import shiboken6
+        def current():
+            return shiboken6.isValid(self) and cl is self.client()
+        def completed(state):
+            if current():
+                self._show(state)
+                if on_done:
+                    on_done()
+
+        jobs.run(lambda progress: fn(cl), on_done=completed,
+                 on_error=lambda e:self._failed(e) if current() else None)
 
     def _failed(self, e: BaseException) -> None:
         if isinstance(e, NotConfigured):
             self._update_notice()
         elif isinstance(e, HttpError) and e.status == 401:
-            self.notice.setText("Ely.by не подтвердил вход. Выйди из аккаунта и войди снова.")
+            self.notice.setText(t('Ely.by не подтвердил вход. Выйди из аккаунта и войди снова.'))
         else:
-            self.notice.setText("Сервер друзей не отвечает: " + _error_text(e))
+            self.notice.setText(t('Сервер друзей не отвечает: {error}', error=_error_text(e)))
 
     # ---------- view ----------
     def _clear(self, rows: list) -> None:
@@ -195,16 +256,22 @@ class FriendsPage(QWidget):
         if not isinstance(st, dict):
             return
         self.notice.setText("")
+        remember(self.ctx, self.window, st)
         friends = st.get("friends") or []
+        self.chats.start(self.client(), st.get("me",""), [f["name"] for f in friends])
         online = sum(1 for f in friends if f.get("online"))
-        self.subtitle.setText(f"{online} в сети" if friends else "Пока никого. Добавь друга по нику на Ely.by.")
+        if self.window is not None and hasattr(self.window, "nav_button"):
+            self.window.nav_button("friends").set_badge(str(online) if online else "")
+        if self.window is not None and hasattr(self.window, "set_online_faces"):
+            self.window.set_online_faces([(f["name"], self._faces.get(f["name"])) for f in friends if f.get("online")])
+        self.subtitle.setText(t('{online} в сети', online=online) if friends else t('Пока никого. Добавь друга по нику на Ely.by.'))
         for rows in (self.invite_rows, self.request_rows, self.rows):
             self._clear(rows)
         pos = 0
         for inv in st.get("invites") or []:
             r = InviteRow(inv)
             r.play_btn.clicked.connect(lambda _=False, inv=inv: self._play(inv.get("pack", ""), inv.get("server", ""),
-                                                                            inv["from"]))
+                                                                            inv["from"], inv.get("pack_id", ""), inv.get("pack_version", "")))
             r.later_btn.clicked.connect(lambda _=False, n=inv["from"]: self._run(lambda c: c.dismiss(n)))
             self.list.insertWidget(pos, r)
             pos += 1
@@ -218,7 +285,11 @@ class FriendsPage(QWidget):
             self.request_rows.append(r)
         for f in sorted(friends, key=lambda f: (not f.get("online"), f["name"].lower())):
             r = FriendRow(f)
-            r.join.connect(lambda f: self._play(f.get("pack", ""), f.get("server", "")))
+            r.join.connect(lambda f: self._play(f.get("pack", ""), f.get("server", ""),
+                                                pack_id=f.get("pack_id", ""), version=f.get("pack_version", "")))
+            r.chat.connect(self.chats.direct)
+            if hasattr(self.window, "open_profile"):
+                r.profile.connect(self.window.open_profile)
             r.invite.connect(self._invite)
             r.remove.connect(lambda n: self._run(lambda c: c.remove(n)))
             self.list.insertWidget(pos, r)
@@ -226,7 +297,7 @@ class FriendsPage(QWidget):
             self.rows.append(r)
             self._face(r)
         out = st.get("outgoing") or []
-        self.outgoing.setText("Ждут ответа: " + ", ".join(out) if out else "")
+        self.outgoing.setText(t('Ждут ответа: {names}', names=", ".join(out)) if out else "")
         self.outgoing.setVisible(bool(out))
 
     def _face(self, row: FriendRow) -> None:
@@ -252,7 +323,9 @@ class FriendsPage(QWidget):
         if not name:
             return
         self.add_name.clear()
-        self.notice.setText(f"Заявка отправлена: {name}")
+        self.notice.setText("")
+        if self.window is not None and hasattr(self.window, "toast"):
+            self.window.toast(t('Заявка отправлена: {name}', name=name))
         self._run(lambda c: c.request(name))
 
     def _invite(self, name: str) -> None:
@@ -260,14 +333,23 @@ class FriendsPage(QWidget):
         lp = common.current_pack(self.ctx)
         pack = lp.name if lp else ""
         server = lp.server if lp else ""
-        self.notice.setText(f"Приглашение отправлено: {name}")
-        self._run(lambda c: c.invite(name, pack, server))
+        if self.window is not None and hasattr(self.window, "toast"):
+            self.window.toast(t('Приглашение отправлено: {name}', name=name))
+        identity = {}
+        status, playing, addr = getattr(self.window, "game_status", ("launcher", "", ""))
+        if status == "playing" and addr:
+            pack, server = playing, addr
+            identity = getattr(self.window, "game_pack", {})
+        self._run(lambda c: c.invite(name, pack, server, **identity))
 
-    def _play(self, pack: str, server: str, dismiss_from: str | None = None) -> None:
-        packs = localpacks.list_installed(self.ctx.lay)
-        match = next((p for p in packs if p.name == pack), None)
+    def _play(self, pack: str, server: str, dismiss_from: str | None = None, pack_id="", version="") -> None:
+        match = coop.invited_pack(self.ctx.lay, pack, pack_id, version)
+        if pack_id and version and match is None:
+            self.notice.setText(t('Установи сборку «{pack}» версии {version}, чтобы присоединиться.',
+                                  pack=pack, version=version))
+            return
         if pack and match is None:
-            self.notice.setText(f"Сначала установи сборку «{pack}» на главной.")
+            self.notice.setText(t('Сначала установи сборку «{pack}» на главной.', pack=pack))
             return
         if match is not None:
             self.ctx.settings.selected_pack = match.id

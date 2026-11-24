@@ -34,38 +34,67 @@ def hbox(parent: QWidget | None = None, margins=(0, 0, 0, 0), spacing: int = 8) 
     return lay
 
 
+class FpsControl(QWidget):
+    def __init__(self):
+        super().__init__()
+        from netlauncher.i18n import t
+        from netlauncher.ui.widgets import Toggle
+        self.toggle = Toggle()
+        title = t("Режим FPS")
+        hint = t("Прорисовка — 10 чанков. Лаунчер настроит Java и добавит совместимые моды для ускорения игры.")
+        self.toggle.setAccessibleName(title)
+        self.toggle.setAccessibleDescription(hint)
+        row = hbox(self, spacing=10)
+        row.addWidget(self.toggle)
+        text = vbox(spacing=2)
+        text.addWidget(label(title, 10.5, 620))
+        text.addWidget(label(hint, 9.5, role="muted", wrap=True))
+        row.addLayout(text, 1)
+
+
 def plural(n: int, one: str, few: str, many: str) -> str:
-    n100, n10 = n % 100, n % 10
-    if n10 == 1 and n100 != 11:
-        return one
-    if 2 <= n10 <= 4 and not 12 <= n100 <= 14:
-        return few
-    return many
+    from netlauncher.i18n import plural as _plural
+    return _plural(n, one, few, many)
 
 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
           "ноября", "декабря"]
+MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _ru() -> bool:
+    from netlauncher.i18n import language
+    return language() == "ru"
+
+
+def _dec(x: float) -> str:
+    s = f"{x:.1f}"
+    return s.replace(".", ",") if _ru() else s
 
 
 def human_date(dt) -> str:
-    return f"{dt.day} {MONTHS[dt.month - 1]}, {dt:%H:%M}"
+    if _ru():
+        return f"{dt.day} {MONTHS[dt.month - 1]}, {dt:%H:%M}"
+    return f"{MONTHS_EN[dt.month - 1]} {dt.day}, {dt:%H:%M}"
 
 
 def human_size(n: int) -> str:
+    ru = _ru()
     if n >= 1 << 30:
-        return f"{n / (1 << 30):.1f} ГБ".replace(".", ",")
+        return f"{_dec(n / (1 << 30))} {'ГБ' if ru else 'GB'}"
     if n >= 1 << 20:
-        return f"{round(n / (1 << 20))} МБ"
-    return f"{max(1, round(n / 1024))} КБ"
+        return f"{round(n / (1 << 20))} {'МБ' if ru else 'MB'}"
+    return f"{max(1, round(n / 1024))} {'КБ' if ru else 'KB'}"
 
 
 def human_downloads(n: int) -> str:
+    ru = _ru()
     if n >= 10_000_000:
-        return f"{round(n / 1_000_000)} млн загрузок"
+        return f"{round(n / 1_000_000)} млн загрузок" if ru else f"{round(n / 1_000_000)}M downloads"
     if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f} млн загрузок".replace(".", ",")
+        return f"{_dec(n / 1_000_000)} млн загрузок" if ru else f"{_dec(n / 1_000_000)}M downloads"
     if n >= 1000:
-        return f"{round(n / 1000)} тыс. загрузок"
+        return f"{round(n / 1000)} тыс. загрузок" if ru else f"{round(n / 1000)}K downloads"
     return f"{n} {plural(n, 'загрузка', 'загрузки', 'загрузок')}"
 
 
@@ -74,10 +103,27 @@ def confirm(parent, title: str, text: str, ok: str) -> bool:
     box = QMessageBox(parent)
     box.setWindowTitle(title)
     box.setText(text)
+    from netlauncher.i18n import t
     yes = box.addButton(ok, QMessageBox.ButtonRole.AcceptRole)
-    box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+    box.addButton(t("Отмена"), QMessageBox.ButtonRole.RejectRole)
     box.exec()
     return box.clickedButton() is yes
+
+
+def confirm_with_option(parent, title: str, text: str, ok: str, option: str, default: bool = True) -> tuple[bool, bool]:
+    """Yes/cancel dialog with one checkbox. Returns (confirmed, checkbox state)."""
+    from PySide6.QtWidgets import QCheckBox, QMessageBox
+    from netlauncher.i18n import t
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    check = QCheckBox(option)
+    check.setChecked(default)
+    box.setCheckBox(check)
+    yes = box.addButton(ok, QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(t("Отмена"), QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    return box.clickedButton() is yes, check.isChecked()
 
 
 def current_pack(ctx):

@@ -59,3 +59,13 @@ def test_curseforge_search_sort_category_and_details():
     assert d.author == "breenihilation" and d.body_format == "html" and "Импланты" in d.body
     assert d.gallery == [("https://i/s.png", "Arm")] and d.page_url == "https://cf/c"
     assert d.links == {"Исходники": "https://gh/c"}
+
+
+def test_clean_html_strips_image_sizes_and_floats():
+    from netlauncher.ui.richtext import clean_html
+
+    original = ('<p>Above <a href="https://example.org"><IMG width="640" height=200 align="left" '
+                'STYLE="float:right" HSPACE=6 vspace=9 ALT="A &amp; B" src="https://images/one"></a>'
+                ' below<img src="two"/></p>')
+    assert clean_html(original) == ('<p>Above </p><p><a href="https://example.org"><img alt="A &amp; B" '
+                                     'src="https://images/one"></a></p><p> below</p><p><img src="two"></p>')

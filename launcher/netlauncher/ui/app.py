@@ -19,7 +19,7 @@ from netlauncher.paths import Layout, layout
 from netlauncher.settings import Settings, load_settings, save_settings
 
 SERVER_NAME = "net-launcher"
-CREDITS = ["@looper_fj", "Claude Code"]
+CREDITS = ["@looper_fj"]
 
 
 @dataclass
@@ -32,6 +32,8 @@ class AppContext:
     accounts: AccountStore
     installer: GameInstaller
     catalog: object = None
+    current_window: object = None
+    discord: object = None
 
     def save(self) -> None:
         save_settings(self.lay.settings_file, self.settings)
@@ -69,18 +71,29 @@ def main() -> int:
     app.setDesktopFileName("net-launcher")
     if _already_running():
         return 0
+    from netlauncher import i18n
+    lay = layout()
+    i18n.set_language(load_settings(lay.settings_file).language)
     from netlauncher.ui import theme
     from netlauncher.ui.window import MainWindow
     theme.apply(app)
-    ctx = make_context(layout(), RequestsHttp())
+    theme.follow_local_design(app, lay.root)
+    ctx = make_context(lay, RequestsHttp())
     from netlauncher.ui import anim
     anim.set_enabled(ctx.settings.animations)
     win = MainWindow(ctx, page_factory=_pages())
+    from netlauncher.discord_presence import DiscordPresence
+    ctx.discord = DiscordPresence(ctx, app)
+    app.aboutToQuit.connect(ctx.discord.close)
     server = QLocalServer()
     QLocalServer.removeServer(SERVER_NAME)
     server.listen(SERVER_NAME)
-    server.newConnection.connect(lambda: (server.nextPendingConnection(), win.restore_from_tray()))
+    server.newConnection.connect(lambda: (server.nextPendingConnection(), ctx.current_window.restore_from_tray()))
     win.show()
+    if anim.enabled():
+        from netlauncher.ui.splash import Splash
+        home = win.page("home")
+        Splash(win, lambda: getattr(home, "startup_done", True)).start()
     return app.exec()
 
 

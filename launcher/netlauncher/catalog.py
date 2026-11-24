@@ -35,6 +35,8 @@ class Catalog:
     launcher_urls: dict[str, str]
     packs: list[PackEntry] = field(default_factory=list)
     friends_url: str = ""
+    curseforge_proxy: str = ""
+    support_url: str = ""
 
     def get(self, pack_id: str) -> PackEntry | None:
         return next((p for p in self.packs if p.id == pack_id), None)
@@ -52,15 +54,22 @@ def parse(raw: dict) -> Catalog:
         except TypeError:
             continue
     friends = raw.get("friends") or {}
-    return Catalog(str(launcher.get("version", "")), dict(launcher.get("urls") or {}), packs,
-                   str(friends.get("url", "")) if isinstance(friends, dict) else "")
+    support = raw.get("support") or {}
+    base = str(friends.get("url", "")) if isinstance(friends, dict) else ""
+    return Catalog(str(launcher.get("version", "")), dict(launcher.get("urls") or {}), packs, friends_url=base,
+                   curseforge_proxy=str(raw.get("curseforge_proxy") or (base.rstrip("/") + "/cf" if base else "")),
+                   support_url=str(support.get("url", "")) if isinstance(support, dict) else "")
 
 
 def to_json(cat: Catalog) -> dict:
     out = {"format": 1, "launcher": {"version": cat.launcher_version, "urls": cat.launcher_urls},
            "packs": [vars(p) for p in cat.packs]}
+    if cat.support_url:
+        out["support"] = {"url": cat.support_url}
     if cat.friends_url:
         out["friends"] = {"url": cat.friends_url}
+    if cat.curseforge_proxy and cat.curseforge_proxy != cat.friends_url.rstrip("/") + "/cf":
+        out["curseforge_proxy"] = cat.curseforge_proxy
     return out
 
 
@@ -68,27 +77,35 @@ def contents_url(repo: str) -> str:
     return f"https://api.github.com/repos/{repo}/contents/{CATALOG_PATH}"
 
 
-def fetch(http: Http, repo: str) -> Catalog | None:
+def fetch(http: Http, repo: str, *, report_offline: bool = False) -> Catalog | None:
     try:
         raw = http.get_json(contents_url(repo), headers={"Accept": "application/vnd.github.raw+json"})
-    except (Offline, HttpError, ValueError):
+    except Offline:
+        if report_offline:
+            raise
+        return None
+    except (HttpError, ValueError):
         return None
     return parse(raw) if isinstance(raw, dict) else None
 
 
-def resolve(http: Http) -> Catalog | None:
+def resolve(http: Http, *, report_offline: bool = False) -> Catalog | None:
     override = os.environ.get("NET_LAUNCHER_CATALOG")
     if override:
         if override.startswith(("http://", "https://")):
             try:
                 return parse(http.get_json(override))
-            except (Offline, HttpError, ValueError):
+            except Offline:
+                if report_offline:
+                    raise
+                return None
+            except (HttpError, ValueError):
                 return None
         try:
             return parse(json.loads(Path(override).read_text(encoding="utf-8")))
         except (OSError, ValueError):
             return None
-    return fetch(http, PACK_REPO) if PACK_REPO else None
+    return fetch(http, PACK_REPO, report_offline=report_offline) if PACK_REPO else None
 
 
 def _parts(v: str) -> list[int]:

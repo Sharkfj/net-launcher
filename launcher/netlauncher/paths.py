@@ -31,6 +31,7 @@ class Layout:
     cache: Path
     settings_file: Path
     accounts_file: Path
+    backups: Path
 
 
 def layout(root: Path | None = None) -> Layout:
@@ -43,6 +44,7 @@ def layout(root: Path | None = None) -> Layout:
         cache=r / "cache",
         settings_file=r / "settings.json",
         accounts_file=r / "accounts.json",
+        backups=r / "backups",
     )
     for d in (lay.root, lay.minecraft, lay.instances, lay.snapshots, lay.cache):
         d.mkdir(parents=True, exist_ok=True)

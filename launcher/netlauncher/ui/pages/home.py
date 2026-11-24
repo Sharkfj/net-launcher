@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPainter, QPainterPath
-from PySide6.QtWidgets import (QFileDialog, QInputDialog, QLineEdit, QSizePolicy, QStackedWidget, QWidget)
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont, QPainter, QPainterPath
+from PySide6.QtWidgets import (QFileDialog, QInputDialog, QLabel, QLineEdit, QPushButton, QSizePolicy, QStackedWidget,
+                               QWidget)
 
 from netlauncher import localpacks, skin
 from netlauncher.auth_ely import (Account, AuthUnavailable, BadCredentials, NeedLogin, TwoFactorRequired,
-                                  ensure_valid)
+                                  ensure_valid, offline_account, valid_nick)
 from netlauncher.author import new_pack_id
 from netlauncher.catalog import Catalog, PackEntry, is_newer
-from netlauncher.catalog import resolve as resolve_catalog
+from functools import partial
+from netlauncher.catalog import resolve
+
+resolve_catalog = partial(resolve, report_offline=True)
 from netlauncher.importer import find_instances, import_instance, read_versions
+from netlauncher import coop
 from netlauncher.launch import GameProcess, LaunchSpec, LogProgress, Stage, apply_fullscreen, build_command, crash_info
 from netlauncher.localpacks import LocalPack
 from netlauncher.net import HashMismatch, HttpError, Offline
@@ -24,8 +31,8 @@ from netlauncher.settings import recommended_ram_mb
 from netlauncher.ui import anim, jobs
 from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
-from netlauncher.ui.skinview import SkinView3D, face
-from netlauncher.ui.theme import qcolor
+from netlauncher.ui.skinview import face
+from netlauncher.ui.theme import DISPLAY as DISPLAY_FAMILY, font, qcolor
 from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, SmoothBar, Toggle
 
 LOADER_NAMES = {"neoforge": "NeoForge", "fabric": "Fabric", "forge": "Forge", "quilt": "Quilt", "vanilla": ""}
@@ -34,12 +41,18 @@ ELY_SKIN_UPLOAD = "https://ely.by/load"
 
 
 def _error_text(e: BaseException) -> str:
+    from netlauncher import integrity
+    if isinstance(e, integrity.NeedsInternet):
+        return t('Часть файлов сборки пропала или изменилась. Подключись к интернету, и лаунчер вернёт их.')
+    if isinstance(e, integrity.NotRepaired):
+        names = ", ".join(Path(p).name for p in (e.report.missing + e.report.changed)[:3])
+        return t('Не получилось вернуть файлы сборки: {names}. Удали сборку во вкладке «Сборки» и поставь заново во вкладке «Официальные». Миры при удалении сохранятся.', names=names)
     if isinstance(e, (Offline, AuthUnavailable)):
-        return "Нет связи с сервером. Проверь интернет и попробуй ещё раз."
+        return t('Нет связи с сервером. Проверь интернет и попробуй ещё раз.')
     if isinstance(e, HashMismatch):
-        return f"Файл {e.path.name} скачался с ошибкой. Попробуй ещё раз."
+        return t('Файл {name} скачался с ошибкой. Попробуй ещё раз.', name=e.path.name)
     if isinstance(e, HttpError):
-        return f"Сервер ответил ошибкой {e.status}. Попробуй позже."
+        return t('Сервер ответил ошибкой {status}. Попробуй позже.', status=e.status)
     return str(e) or e.__class__.__name__
 
 
@@ -57,18 +70,18 @@ class LoginPanel(QWidget):
         card = GlassCard(radius=20)
         card.setFixedWidth(400)
         lay = vbox(card, (32, 30, 32, 28), 12)
-        lay.addWidget(label("Вход", 22, 650, display=True))
-        self.hint = label("Нужен аккаунт Ely.by: с ним работают скины и вход на сервер.", 10.5, role="muted",
+        lay.addWidget(label(t('Вход'), 22, 650, display=True))
+        self.hint = label(t('Нужен аккаунт Ely.by: с ним работают скины и вход на сервер.'), 10.5, role="muted",
                           wrap=True)
         lay.addWidget(self.hint)
         lay.addSpacing(6)
         self.user = QLineEdit()
-        self.user.setPlaceholderText("Логин или почта")
+        self.user.setPlaceholderText(t('Логин или почта'))
         self.password = QLineEdit()
-        self.password.setPlaceholderText("Пароль")
+        self.password.setPlaceholderText(t('Пароль'))
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.totp = QLineEdit()
-        self.totp.setPlaceholderText("Код из приложения")
+        self.totp.setPlaceholderText(t('Код из приложения'))
         self.totp.setMaxLength(8)
         self.totp.hide()
         for w in (self.user, self.password, self.totp):
@@ -76,16 +89,38 @@ class LoginPanel(QWidget):
             lay.addWidget(w)
         self.error = label("", 10, role="danger", wrap=True)
         lay.addWidget(self.error)
-        self.button = AccentButton("Войти")
+        self.button = AccentButton(t('Войти'))
         self.button.clicked.connect(self.submit)
         lay.addWidget(self.button)
-        reg = GhostButton("Создать аккаунт на Ely.by")
+        reg = GhostButton(t('Создать аккаунт на Ely.by'))
         reg.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(REGISTER_URL)))
         lay.addWidget(reg)
+        self.guest_btn = GhostButton(t('Играть без входа'))
+        self.guest_btn.clicked.connect(self._guest)
+        lay.addWidget(self.guest_btn)
+        lay.addSpacing(4)
+        ms_row = hbox(None, (0, 0, 0, 0), 10)
+        self.ms_button = GhostButton(t('Войти через Microsoft'))
+        from netlauncher.auth_ms import MS_CLIENT_ID
+        self.ms_button.setEnabled(bool(MS_CLIENT_ID))
+        ms_row.addWidget(self.ms_button, 1)
+        self.ms_note = label(t('В разработке'), 9.5, role="faint")
+        self.ms_note.setVisible(not MS_CLIENT_ID)
+        ms_row.addWidget(self.ms_note)
+        lay.addLayout(ms_row)
         row.addWidget(card)
         row.addStretch(1)
         outer.addLayout(row)
         outer.addStretch(2)
+
+    def _guest(self) -> None:
+        name, ok = QInputDialog.getText(self, t('Играть без входа'), t('Ник для одиночной игры'))
+        if not ok:
+            return
+        if not valid_nick(name):
+            self.error.setText(t('Введи от 3 до 16 символов: латинские буквы, цифры или _.'))
+            return
+        self._done(offline_account(name))
 
     def set_message(self, text: str) -> None:
         self.error.setText(text)
@@ -93,14 +128,14 @@ class LoginPanel(QWidget):
     def submit(self) -> None:
         user, pw, code = self.user.text().strip(), self.password.text(), self.totp.text().strip()
         if not user or not pw:
-            self.error.setText("Введи логин и пароль.")
+            self.error.setText(t('Введи логин и пароль.'))
             return
         if self.totp.isVisible() and not code:
-            self.error.setText("Введи код из приложения.")
+            self.error.setText(t('Введи код из приложения.'))
             return
         self.error.setText("")
         self.button.setEnabled(False)
-        self.button.setText("Вхожу")
+        self.button.setText(t('Вхожу'))
         jobs.run(lambda progress: self.ctx.auth.login(user, pw, code or None),
                  on_done=self._done, on_error=self._failed)
 
@@ -117,111 +152,63 @@ class LoginPanel(QWidget):
         if isinstance(e, TwoFactorRequired):
             self.totp.show()
             self.totp.setFocus()
-            self.error.setText("На аккаунте включена двухфакторная защита. Введи код из приложения.")
+            self.error.setText(t('На аккаунте включена двухфакторная защита. Введи код из приложения.'))
         elif isinstance(e, BadCredentials):
-            self.error.setText("Неверный логин или пароль." if not self.totp.isVisible()
-                               else "Неверный пароль или код.")
+            self.error.setText(t('Неверный логин или пароль.') if not self.totp.isVisible()
+                               else t('Неверный пароль или код.'))
         elif isinstance(e, AuthUnavailable):
-            self.error.setText("Ely.by не отвечает. Проверь интернет и попробуй ещё раз.")
+            self.error.setText(t('Ely.by не отвечает. Проверь интернет и попробуй ещё раз.'))
         else:
             self.error.setText(_error_text(e))
 
     def _reset_button(self):
         self.button.setEnabled(True)
-        self.button.setText("Войти")
+        self.button.setText(t('Войти'))
 
 
 # ---------------------------------------------------------------- first run: theme
-class ThemeCard(QWidget):
-    clicked = Signal(str)
-
-    def __init__(self, key: str, title: str, text: str, parent=None):
-        super().__init__(parent)
-        self.key, self.title, self.text = key, title, text
-        self.selected = False
-        self.setFixedSize(260, 230)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def mousePressEvent(self, e):  # noqa: N802
-        self.clicked.emit(self.key)
-
-    def paintEvent(self, e):  # noqa: N802
-        from PySide6.QtGui import QColor, QLinearGradient, QPen, QRadialGradient
-        from netlauncher.ui.theme import font
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
-        p.setPen(QPen(qcolor("accent") if self.selected else qcolor("border"), 2 if self.selected else 1))
-        p.setBrush(qcolor("card"))
-        p.drawRoundedRect(r, 16, 16)
-        prev = QRectF(16, 16, r.width() - 30, 130)
-        p.save()
-        clip = QPainterPath()
-        clip.addRoundedRect(prev, 10, 10)
-        p.setClipPath(clip)
-        if self.key == "glass":
-            p.fillRect(prev, QColor("#20304F"))
-            for cx, cy, rad, col in ((50, 40, 60, "#E0773A"), (170, 120, 70, "#3FA36B"), (200, 30, 50, "#8E5BD8")):
-                g = QRadialGradient(prev.x() + cx, prev.y() + cy, rad)
-                g.setColorAt(0, QColor(col))
-                g.setColorAt(1, QColor(0, 0, 0, 0))
-                p.fillRect(prev, g)
-            p.fillRect(prev.adjusted(18, 16, -18, -16), qcolor("window"))
-        else:
-            g = QLinearGradient(prev.topLeft(), prev.bottomLeft())
-            g.setColorAt(0, QColor("#0F1A2E"))
-            g.setColorAt(1, QColor("#0A101D"))
-            p.fillRect(prev, g)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(qcolor("accent"))
-        p.drawRoundedRect(QRectF(prev.x() + 34, prev.bottom() - 40, 70, 18), 6, 6)
-        p.setBrush(QColor(255, 255, 255, 40))
-        p.drawRoundedRect(QRectF(prev.x() + 34, prev.y() + 30, 110, 12), 4, 4)
-        p.restore()
-        p.setPen(qcolor("text"))
-        p.setFont(font(12, 620))
-        p.drawText(QRectF(18, 156, r.width() - 30, 24), Qt.AlignmentFlag.AlignLeft, self.title)
-        p.setPen(qcolor("muted"))
-        p.setFont(font(9.5))
-        p.drawText(QRectF(18, 182, r.width() - 30, 40), Qt.TextFlag.TextWordWrap, self.text)
-
-
 class WelcomePanel(QWidget):
-    done = Signal(str)
-    picked = Signal(str)
+    done = Signal()
 
-    def __init__(self, current: str = "glass", parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         lay = vbox(self, (8, 0, 8, 0), 12)
         lay.addStretch(1)
-        lay.addWidget(label("Добро пожаловать", 30, 650, display=True))
-        lay.addWidget(label("Выбери, как будет выглядеть лаунчер. Поменять можно в настройках.", 11, role="muted"))
+        self.title = label(t('Добро пожаловать'), 30, 650, display=True)
+        lay.addWidget(self.title)
+        lay.addWidget(label(t('Выбери язык. Поменять его можно в настройках.'), 11, role="muted"))
+        lay.addSpacing(10)
+        from netlauncher.i18n import LANGS, language
+        lrow = hbox(None, (0, 0, 0, 0), 8)
+        lrow.addWidget(label(t('Язык'), 10.5, 520))
+        self.lang_chips = {}
+        for key, text in LANGS:
+            c = Chip(text, key == language())
+            c.clicked.connect(lambda key=key: self.pick_language(key))
+            lrow.addWidget(c)
+            self.lang_chips[key] = c
+        lrow.addStretch(1)
+        lay.addLayout(lrow)
+        lay.addSpacing(10)
+        srow = hbox(None, (0, 0, 0, 0), 10)
+        self.shortcut = Toggle()
+        self.shortcut.setChecked(True)
+        self.shortcut._set_knob(1.0)
+        srow.addWidget(self.shortcut)
+        srow.addWidget(label(t('Ярлык на рабочем столе'), 10.5, 520))
+        srow.addStretch(1)
+        lay.addLayout(srow)
         lay.addSpacing(14)
-        row = hbox(None, (0, 0, 0, 0), 16)
-        self.cards = [ThemeCard("glass", "Стекло", "Окно прозрачное, за ним размытый рабочий стол."),
-                      ThemeCard("solid", "Сплошная", "Тёмно-синее окно без прозрачности.")]
-        for c in self.cards:
-            c.clicked.connect(self.pick)
-            row.addWidget(c)
-        row.addStretch(1)
-        lay.addLayout(row)
-        lay.addSpacing(14)
-        self.next_btn = AccentButton("Дальше")
-        self.next_btn.clicked.connect(lambda: self.done.emit(self.choice))
+        self.next_btn = AccentButton(t('Дальше'))
+        self.next_btn.clicked.connect(self.done.emit)
         lay.addWidget(self.next_btn, 0, Qt.AlignmentFlag.AlignLeft)
         lay.addStretch(2)
-        self.choice = current
-        self._mark()
 
-    def pick(self, key: str) -> None:
-        self.choice = key
-        self._mark()
-        self.picked.emit(key)
+    language_picked = Signal(str)
 
-    def _mark(self):
-        for c in self.cards:
-            c.selected = c.key == self.choice
-            c.update()
+    def pick_language(self, lang: str):
+        self.language_picked.emit(lang)
+        return getattr(self, "_rebuilt", None)
 
 
 # ---------------------------------------------------------------- no packs yet
@@ -233,11 +220,11 @@ class EmptyPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = vbox(self, (8, 0, 8, 0), 10)
-        lay.addWidget(label("Сборок пока нет", 30, 650, display=True))
-        lay.addWidget(label("Поставь сборку из списка, перенеси свою из PineconeMC или создай новую.", 11,
+        lay.addWidget(label(t('Сборок пока нет'), 30, 650, display=True))
+        lay.addWidget(label(t('Поставь сборку из списка, перенеси свою из PineconeMC или создай новую.'), 11,
                             role="muted"))
         lay.addSpacing(6)
-        self.create_btn = GhostButton("Создать свою сборку")
+        self.create_btn = GhostButton(t('Создать свою сборку'))
         self.create_btn.clicked.connect(self.create.emit)
         lay.addWidget(self.create_btn, 0, Qt.AlignmentFlag.AlignLeft)
         lay.addSpacing(8)
@@ -269,21 +256,21 @@ class EmptyPanel(QWidget):
         for e in (catalog.packs if catalog else []):
             if e.id in installed:
                 continue
-            b = AccentButton("Установить")
+            b = AccentButton(t('Установить'))
             b.clicked.connect(lambda _=False, e=e: self.install_entry.emit(e))
             self.catalog_buttons.append(b)
             self._rows.append(self._row(e.name, e.description or f"Minecraft {e.mc_version}", b))
         for inst in instances:
-            b = GhostButton(f"Перенести «{inst.name}»")
+            b = GhostButton(t('Перенести «{name}»', name=inst.name))
             b.clicked.connect(lambda _=False, i=inst: self.import_from.emit(i))
             self.import_buttons.append(b)
             self._rows.append(self._row(f"PineconeMC: {inst.name}",
-                                        "Скопирую моды, настройки и миры. В PineconeMC всё останется как было.", b))
+                                        t('Скопирую моды, настройки и миры. В PineconeMC всё останется как было.'), b))
         for w in self._rows:
             self.list.addWidget(w)
         anim.stagger(self._rows)
         self.note.setText("" if self._rows else
-                          "Список сборок не загрузился, а в PineconeMC сборок не нашлось. Проверь интернет.")
+                          t('Список сборок не загрузился, а в PineconeMC сборок не нашлось. Проверь интернет.'))
 
 
 # ---------------------------------------------------------------- long operations
@@ -302,7 +289,7 @@ class ProgressPanel(QWidget):
 
     def start(self, title: str) -> None:
         self.title.setText(title)
-        self.step.setText("Готовлю")
+        self.step.setText(t('Готовлю'))
         self.bar.set_fraction(0)
         self.percent.setText("")
 
@@ -321,17 +308,17 @@ class ManualPanel(QWidget):
         self.setAcceptDrops(True)
         lay = vbox(self, (8, 0, 8, 0), 12)
         lay.addStretch(1)
-        lay.addWidget(label("Один файл нужно скачать вручную", 22, 650, display=True))
+        lay.addWidget(label(t('Один файл нужно скачать вручную'), 22, 650, display=True))
         self.text = label("", 11, role="muted", wrap=True)
         lay.addWidget(self.text)
         row = hbox()
-        self.open_btn = AccentButton("Открыть страницу мода")
-        self.pick_btn = GhostButton("Выбрать скачанный файл")
+        self.open_btn = AccentButton(t('Открыть страницу мода'))
+        self.pick_btn = GhostButton(t('Выбрать скачанный файл'))
         row.addWidget(self.open_btn)
         row.addWidget(self.pick_btn)
         row.addStretch(1)
         lay.addLayout(row)
-        self.drop = label("Или перетащи файл в это окно.", 10, role="faint")
+        self.drop = label(t('Или перетащи файл в это окно.'), 10, role="faint")
         lay.addWidget(self.drop)
         self.error = label("", 10, role="danger", wrap=True)
         lay.addWidget(self.error)
@@ -351,8 +338,7 @@ class ManualPanel(QWidget):
             self.finished.emit()
             return
         m = self.missing[0]
-        self.text.setText(f"{m.name} нельзя скачать автоматически: автор запретил перезаливать мод. "
-                          f"Скачай файл {Path(m.path).name} со страницы мода, лаунчер проверит его и положит на место.")
+        self.text.setText(t('{name} нельзя скачать автоматически: автор запретил перезаливать мод. Скачай файл {name2} со страницы мода, лаунчер проверит его и положит на место.', name=m.name, name2=Path(m.path).name))
         self.open_btn.setEnabled(bool(m.page_url))
 
     def _open(self):
@@ -360,7 +346,7 @@ class ManualPanel(QWidget):
             QDesktopServices.openUrl(QUrl(self.missing[0].page_url))
 
     def _pick(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Файл мода", str(Path.home() / "Downloads"), "Моды (*.jar)")
+        path, _ = QFileDialog.getOpenFileName(self, t('Файл мода'), str(Path.home() / "Downloads"), t('Моды (*.jar)'))
         if path:
             self.accept_file(Path(path))
 
@@ -368,8 +354,7 @@ class ManualPanel(QWidget):
         try:
             m = add_manual(self.pack_index, self.game_dir, path)
         except HashMismatch:
-            self.error.setText("Это другой файл или другая версия. Нужен именно " +
-                               Path(self.missing[0].path).name + ".")
+            self.error.setText(t('Это другой файл или другая версия. Нужен именно {name}.', name=Path(self.missing[0].path).name))
             return
         self.error.setText("")
         self.missing = [x for x in self.missing if x.sha1 != m.sha1]
@@ -392,22 +377,23 @@ class CreatePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PySide6.QtWidgets import QComboBox
+        from netlauncher.ui.widgets import CompactCombo
         from netlauncher import instances
         lay = vbox(self, (8, 0, 8, 0), 12)
         lay.addStretch(1)
-        lay.addWidget(label("Новая сборка", 26, 650, display=True))
-        lay.addWidget(label("Выбери версию Minecraft и загрузчик модов. Моды добавишь потом в разделе «Моды».",
+        lay.addWidget(label(t('Новая сборка'), 26, 650, display=True))
+        lay.addWidget(label(t('Выбери версию Minecraft и загрузчик модов. Моды добавишь потом в разделе «Моды».'),
                             11, role="muted", wrap=True))
         lay.addSpacing(8)
         self.name = QLineEdit()
-        self.name.setPlaceholderText("Название")
+        self.name.setPlaceholderText(t('Название'))
         self.name.setMaximumWidth(420)
         lay.addWidget(self.name)
-        self.version = QComboBox()
+        self.version = CompactCombo()
+        self.version.setAccessibleName(t('Версия Minecraft'))
         self.version.setMinimumWidth(200)
         row = hbox(None, (0, 0, 0, 0), 10)
-        row.addWidget(label("Версия Minecraft", 10.5, 520))
+        row.addWidget(label(t('Версия Minecraft'), 10.5, 520))
         row.addWidget(self.version)
         row.addStretch(1)
         lay.addLayout(row)
@@ -415,25 +401,30 @@ class CreatePanel(QWidget):
         self.loader = "neoforge"
         self.loader_chips = {}
         for key, text in instances.LOADERS:
-            c = Chip(text, key == self.loader)
+            c = Chip(t(text), key == self.loader)
             c.clicked.connect(lambda key=key: self.pick_loader(key))
             chips.addWidget(c)
             self.loader_chips[key] = c
         chips.addStretch(1)
         lay.addLayout(chips)
-        self.loader_version = QComboBox()
+        self.loader_version = CompactCombo()
+        self.loader_version.setAccessibleName(t('Версия загрузчика'))
         self.loader_version.setMinimumWidth(200)
         self.loader_line = QWidget()
         lr = hbox(self.loader_line, (0, 0, 0, 0), 10)
-        lr.addWidget(label("Версия загрузчика", 10.5, 520))
+        lr.addWidget(label(t('Версия загрузчика'), 10.5, 520))
         lr.addWidget(self.loader_version)
         lr.addStretch(1)
         lay.addWidget(self.loader_line)
+        fps_control = common.FpsControl()
+        fps_control.setMaximumWidth(485)
+        self.fps = fps_control.toggle
+        lay.addWidget(fps_control)
         self.hint = label("", 10, role="muted", wrap=True)
         lay.addWidget(self.hint)
         brow = hbox(None, (0, 0, 0, 0), 8)
-        self.create_btn = AccentButton("Создать")
-        back = GhostButton("Отмена")
+        self.create_btn = AccentButton(t('Создать'))
+        back = GhostButton(t('Отмена'))
         self.create_btn.clicked.connect(self._create)
         back.clicked.connect(self.cancel.emit)
         brow.addWidget(self.create_btn)
@@ -447,7 +438,8 @@ class CreatePanel(QWidget):
     def open(self) -> None:
         from netlauncher import instances
         self.name.clear()
-        self.hint.setText("Загружаю список версий")
+        self.fps.setChecked(False)
+        self.hint.setText(t('Загружаю список версий'))
         self.create_btn.setEnabled(False)
         jobs.run(lambda progress: instances.minecraft_releases(), on_done=self._versions,
                  on_error=lambda e: self.hint.setText(_error_text(e)))
@@ -481,7 +473,7 @@ class CreatePanel(QWidget):
         self._seq += 1
         seq, loader = self._seq, self.loader
         self.create_btn.setEnabled(False)
-        self.hint.setText("Загружаю версии загрузчика")
+        self.hint.setText(t('Загружаю версии загрузчика'))
         jobs.run(lambda progress: instances.loader_versions(loader, mc),
                  on_done=lambda vs: self._loader_versions(seq, loader, vs),
                  on_error=lambda e: self.hint.setText(_error_text(e)))
@@ -491,8 +483,7 @@ class CreatePanel(QWidget):
             return
         names = dict(LOADER_NAMES)
         if not vs:
-            self.hint.setText(f"Для этой версии Minecraft нет {names.get(loader, loader)}. "
-                              "Выбери другую версию или загрузчик.")
+            self.hint.setText(t('Для этой версии Minecraft нет {x1}. Выбери другую версию или загрузчик.', x1=names.get(loader, loader)))
             self.create_btn.setEnabled(False)
             return
         self.loader_version.addItems(vs)
@@ -533,33 +524,71 @@ class Chip(QWidget):
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text)
 
 
+class PackSwitch(QPushButton):
+    """Current pack name with a menu of installed packs, above the title."""
+
+    picked = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFont(font(10.5, 520))
+        self.setFlat(True)
+        self.setStyleSheet("QPushButton { color: #c3cee3; border: none; padding: 4px 0; text-align: left; }"
+                           "QPushButton:hover { color: #e8eefb; }")
+        self.packs: list[LocalPack] = []
+        self.clicked.connect(self._open)
+
+    def set_packs(self, packs: list[LocalPack], active: LocalPack) -> None:
+        self.packs = packs
+        self.setText(f"{active.name}  ▾" if len(packs) > 1 else active.name)
+        self.setEnabled(len(packs) > 1)
+
+    def _open(self) -> None:
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        for lp in self.packs:
+            m.addAction(lp.name, lambda lp=lp: self.picked.emit(lp.id))
+        m.exec(self.mapToGlobal(self.rect().bottomLeft()))
+
+
+def title_font(text: str) -> QFont:
+    f = font(40, 600, DISPLAY_FAMILY)
+    f.setPixelSize(150 if len(text) <= 6 else 76)
+    return f
+
+
 class PackPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        root = hbox(self, (8, 0, 0, 0), 24)
+        root = hbox(self, (16, 0, 24, 0), 24)
         left = vbox(None, (0, 0, 0, 0), 0)
-        self.chips_row = hbox(None, (0, 0, 0, 0), 8)
-        top_row = hbox(None, (0, 0, 0, 0), 8)
-        top_row.addLayout(self.chips_row, 1)
-        self.new_btn = GhostButton("Новая сборка")
+        left.addStretch(1)
+        top_row = hbox(None, (0, 0, 0, 0), 12)
+        self.switch = PackSwitch()
+        top_row.addWidget(self.switch)
+        self.new_btn = GhostButton(t('Новая сборка'))
         top_row.addWidget(self.new_btn)
+        top_row.addStretch(1)
         left.addLayout(top_row)
-        left.addSpacing(28)
-        self.title = label("", 44, 700, display=True)
-        self.title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        left.addWidget(self.title)
         left.addSpacing(6)
+        self.title = QLabel("")
+        self.title.setFont(title_font(""))
+        self.title.setWordWrap(True)
+        self.title.setMaximumWidth(620)
+        left.addWidget(self.title)
+        left.addSpacing(14)
         self.desc = label("", 12, role="muted", wrap=True)
-        self.desc.setMaximumWidth(520)
+        self.desc.setMaximumWidth(560)
         left.addWidget(self.desc)
         left.addSpacing(4)
         self.meta = label("", 10, role="faint")
         left.addWidget(self.meta)
-        left.addSpacing(26)
+        left.addSpacing(22)
         buttons = hbox(None, (0, 0, 0, 0), 10)
-        self.play_btn = AccentButton("Играть", icon="play", big=True)
+        self.play_btn = AccentButton(t('Играть'), icon="play", big=True)
         self.continue_btn = GhostButton("")
-        self.server_btn = GhostButton("Играть на сервере")
+        self.server_btn = GhostButton(t('Играть на сервере'))
         for b in (self.continue_btn, self.server_btn):
             b.setMinimumHeight(56)
         buttons.addWidget(self.play_btn)
@@ -567,7 +596,7 @@ class PackPanel(QWidget):
         buttons.addWidget(self.server_btn)
         buttons.addStretch(1)
         left.addLayout(buttons)
-        left.addSpacing(18)
+        left.addSpacing(16)
         status_row = hbox(None, (0, 0, 0, 0), 12)
         self.status = label("", 10.5, role="muted")
         self.percent = label("", 10, role="faint")
@@ -580,15 +609,15 @@ class PackPanel(QWidget):
         self.bar.setMaximumWidth(560)
         self.bar.hide()
         left.addWidget(self.bar)
-        left.addSpacing(18)
+        left.addSpacing(12)
 
         self.crash_box = GlassCard()
         cb = vbox(self.crash_box, (20, 16, 20, 16), 6)
-        self.crash_title = label("Игра закрылась с ошибкой", 12.5, 650, role="danger")
+        self.crash_title = label(t('Игра закрылась с ошибкой'), 12.5, 650, role="danger")
         self.crash_text = label("", 10.5, role="muted", wrap=True)
         crow = hbox(None, (0, 6, 0, 0), 8)
-        self.crash_open = GhostButton("Открыть отчёт")
-        self.crash_hide = GhostButton("Скрыть")
+        self.crash_open = GhostButton(t('Открыть отчёт'))
+        self.crash_hide = GhostButton(t('Скрыть'))
         crow.addWidget(self.crash_open)
         crow.addWidget(self.crash_hide)
         crow.addStretch(1)
@@ -602,13 +631,13 @@ class PackPanel(QWidget):
         self.update_box = GlassCard()
         ub = hbox(self.update_box, (20, 14, 14, 14), 12)
         self.update_label = label("", 11, 560)
-        self.update_btn = AccentButton("Обновить")
+        self.update_btn = AccentButton(t('Обновить'))
         ub.addWidget(self.update_label, 1)
         ub.addWidget(self.update_btn)
         self.update_box.setMaximumWidth(620)
         self.update_box.hide()
         left.addWidget(self.update_box)
-        left.addSpacing(10)
+        left.addSpacing(8)
 
         self.news_box = GlassCard()
         nb = vbox(self.news_box, (20, 16, 20, 18), 6)
@@ -619,59 +648,43 @@ class PackPanel(QWidget):
         self.news_box.setMaximumWidth(620)
         self.news_box.hide()
         left.addWidget(self.news_box)
-        left.addStretch(1)
+        left.addSpacing(30)
         root.addLayout(left, 3)
-        self.model_slot = vbox(None, (0, 0, 0, 0), 0)
-        self.model = SkinView3D()
-        self.model.setToolTip("Покрути мышью")
-        self.model_slot.addWidget(self.model, 1)
-        skin_row = hbox(None, (0, 0, 0, 0), 8)
-        skin_row.addStretch(1)
-        self.skin_btn = GhostButton("Сменить скин")
-        skin_row.addWidget(self.skin_btn)
-        skin_row.addStretch(1)
-        self.model_slot.addLayout(skin_row)
+
+        right = vbox(None, (0, 0, 0, 30), 8)
+        right.addStretch(1)
         self.skin_bar = GlassCard()
+        self.skin_bar.setMaximumWidth(340)
         sb = vbox(self.skin_bar, (16, 12, 16, 14), 8)
-        self.skin_hint = label("Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.", 10,
+        self.skin_hint = label(t('Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.'), 10,
                                role="muted", wrap=True)
         sb.addWidget(self.skin_hint)
         srow = hbox(None, (0, 0, 0, 0), 10)
-        srow.addWidget(label("Тонкие руки", 10, 520))
+        srow.addWidget(label(t('Тонкие руки'), 10, 520))
         self.slim = Toggle()
         srow.addWidget(self.slim)
         srow.addStretch(1)
         sb.addLayout(srow)
         brow = hbox(None, (0, 0, 0, 0), 8)
-        self.skin_upload = AccentButton("Загрузить на Ely.by")
-        self.skin_reload = GhostButton("Обновить")
-        self.skin_cancel = GhostButton("Отменить")
+        self.skin_upload = AccentButton(t('Загрузить на Ely.by'))
+        self.skin_reload = GhostButton(t('Обновить'))
+        self.skin_cancel = GhostButton(t('Отменить'))
         for b in (self.skin_upload, self.skin_reload, self.skin_cancel):
             brow.addWidget(b)
         sb.addLayout(brow)
         self.skin_bar.hide()
-        self.model_slot.addWidget(self.skin_bar)
-        root.addLayout(self.model_slot, 2)
-        self._chips: list[Chip] = []
+        right.addWidget(self.skin_bar, 0, Qt.AlignmentFlag.AlignRight)
+        root.addLayout(right, 2)
 
-    def set_chips(self, packs: list[LocalPack], active: str, on_pick) -> None:
-        for c in self._chips:
-            c.setParent(None)
-            c.deleteLater()
-        self._chips = []
-        if len(packs) < 2:
-            self.chips_row.addStretch(1) if self.chips_row.count() == 0 else None
-            return
-        for lp in packs:
-            c = Chip(lp.name, lp.id == active)
-            c.clicked.connect(lambda lp=lp: on_pick(lp.id))
-            self.chips_row.addWidget(c)
-            self._chips.append(c)
-        self.chips_row.addStretch(1)
+    def set_title(self, text: str) -> None:
+        self.title.setFont(title_font(text))
+        self.title.setText(text)
 
 
 # ---------------------------------------------------------------- page
 class HomePage(QWidget):
+    startup_done = False
+
     def __init__(self, ctx, window=None, parent=None):
         super().__init__(parent)
         self.ctx, self.window = ctx, window
@@ -679,7 +692,6 @@ class HomePage(QWidget):
         self.catalog: Catalog | None = None
         self.proc = None
         self.progress: LogProgress | None = None
-        self._log_offset = 0
         self._last_line_at = 0.0
         self._started_at = 0.0
         self._hidden_for_game = False
@@ -688,7 +700,7 @@ class HomePage(QWidget):
         lay = vbox(self)
         self.stack = QStackedWidget()
         lay.addWidget(self.stack)
-        self.welcome = WelcomePanel(ctx.settings.theme)
+        self.welcome = WelcomePanel()
         self.login = LoginPanel(ctx)
         self.empty = EmptyPanel()
         self.panel = PackPanel()
@@ -701,27 +713,31 @@ class HomePage(QWidget):
             self.stack.addWidget(w)
 
         self.login.logged_in.connect(self._on_login)
-        self.welcome.picked.connect(self._preview_theme)
         self.welcome.done.connect(self._welcome_done)
+        self.welcome.language_picked.connect(self._language_picked)
         self.empty.install_entry.connect(self.install_entry)
         self.empty.import_from.connect(self.import_instance)
         self.empty.create.connect(self.open_creator)
         self.manual.finished.connect(self.refresh)
         self.panel.new_btn.clicked.connect(self.open_creator)
+        self.panel.switch.picked.connect(self.pick_pack)
+        self.panel.play_btn.installEventFilter(self)
         self.creator.cancel.connect(self.refresh)
         self.creator.create.connect(self.create_pack)
-        self.panel.play_btn.clicked.connect(lambda: self.play())
+        self.panel.play_btn.clicked.connect(self._play_clicked)
         self.panel.continue_btn.clicked.connect(self._continue)
         self.panel.server_btn.clicked.connect(self._server)
         self.panel.update_btn.clicked.connect(self._update)
         self.panel.crash_open.clicked.connect(self._open_report)
         self.panel.crash_hide.clicked.connect(self.panel.crash_box.hide)
-        self.panel.skin_btn.clicked.connect(self.pick_skin)
         self.panel.slim.toggled.connect(self._slim_changed)
         self.panel.skin_upload.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(ELY_SKIN_UPLOAD)))
         self.panel.skin_reload.clicked.connect(self.reload_skin)
         self.panel.skin_cancel.clicked.connect(self.cancel_skin_preview)
         self._preview_png: bytes | None = None
+        self.skin_account = None
+        self.account_skin = None
+        self._skin_request = 0
 
         self.timer = QTimer(self)
         self.timer.setInterval(250)
@@ -744,81 +760,170 @@ class HomePage(QWidget):
     def current_pack(self) -> LocalPack | None:
         return common.current_pack(self.ctx)
 
-    def _preview_theme(self, theme: str) -> None:
-        if self.window is not None and hasattr(self.window, "set_theme"):
-            self.window.set_theme(theme)
-
-    def _welcome_done(self, theme: str) -> None:
-        self.ctx.settings.theme = theme
-        self.ctx.settings.first_run_done = True
+    def _language_picked(self, lang: str) -> None:
+        from netlauncher import i18n
+        self.ctx.settings.language = lang
         self.ctx.save()
-        self._preview_theme(theme)
+        i18n.set_language(lang)
+        if self.window is not None and hasattr(self.window, "rebuild"):
+            self.welcome._rebuilt = self.window.rebuild()
+
+    def _welcome_done(self) -> None:
+        s = self.ctx.settings
+        if not s.shortcut_asked:
+            s.shortcut_asked = True
+            if self.welcome.shortcut.isChecked():
+                from netlauncher import shortcut
+                try:
+                    shortcut.create(shortcut.launch_command(), shortcut.icon_path())
+                except Exception:  # noqa: BLE001
+                    pass
+        s.first_run_done = True
+        self.ctx.save()
         self.refresh()
 
     def refresh(self) -> None:
         if not self.ctx.settings.first_run_done:
+            self._set_scene(None)
             self._set_mode("welcome")
             return
         acc = self.ctx.accounts.load()
         if self.window is not None and hasattr(self.window, "set_account"):
             self.window.set_account(acc)
         if acc is None:
+            self._set_scene(None)
             self._set_mode("login")
             return
         lp = self.current_pack()
         if lp is None:
+            self._set_scene(None)
             self.empty.fill(self.catalog, find_instances(), set())
             self._set_mode("empty")
             return
         self._show_pack(lp)
+        self._set_scene(lp, animate=getattr(self, "_switching", False))
         self._set_mode("pack")
 
     def _show_pack(self, lp: LocalPack) -> None:
         p = self.panel
         packs = localpacks.list_installed(self.ctx.lay)
-        p.set_chips(packs, lp.id, self._pick_pack)
-        p.title.setText(lp.name)
+        p.switch.set_packs(packs, lp)
+        p.set_title(lp.name)
         p.desc.setText(lp.description)
         p.desc.setVisible(bool(lp.description))
         n = localpacks.mod_count(self.ctx.lay, lp.id)
         loader = LOADER_NAMES.get(lp.loader, lp.loader)
-        meta = f"Minecraft {lp.mc_version}" + (f" с {loader}" if loader else "")
+        meta = f"Minecraft {lp.mc_version}" + (t(' с {loader}', loader=loader) if loader else "")
         p.meta.setText(f"{meta}, {n} {plural(n, 'мод', 'мода', 'модов')}")
         world = localpacks.newest_world(self.ctx.lay, lp.id)
-        p.continue_btn.setText(f"Продолжить «{world}»" if world else "")
+        p.continue_btn.setText(t('Продолжить «{world}»', world=world) if world else "")
         p.continue_btn.setVisible(bool(world))
-        p.server_btn.setVisible(bool(lp.server))
+        p.server_btn.setVisible(bool(lp.server) and not getattr(self.window, "offline", False) and not getattr(self.ctx.accounts.load(), "offline", False))
         entry = self.catalog.get(lp.id) if self.catalog else None
-        if entry and is_newer(entry.version, lp.version):
-            p.update_label.setText(f"Вышла версия {entry.version}. Сейчас стоит {lp.version}.")
+        outdated = self.play_action() == "update"
+        if outdated:
+            p.update_label.setText(t('Вышла версия {version}. Сейчас стоит {version2}.', version=entry.version, version2=lp.version))
             p.update_box.show()
         else:
             p.update_box.hide()
+        # an outdated official pack is only updated, never started: the server expects the new version
+        p.update_btn.hide()
+        p.play_btn.setText(t('Обновить') if outdated else t('Играть'))
+        p.play_btn.icon_name = None if outdated else "play"
+        p.play_btn.updateGeometry()
+        p.play_btn.update()
+        if outdated:
+            p.continue_btn.hide()
+            p.server_btn.hide()
         if entry and entry.changelog:
-            p.news_title.setText(f"Что нового в {entry.version}")
+            p.news_title.setText(t('Что нового в {version}', version=entry.version))
             p.news_text.setText(entry.changelog)
             p.news_box.show()
         else:
             p.news_box.hide()
 
-    def _pick_pack(self, pack_id: str) -> None:
+    # ---------- scene ----------
+    def scene_kind(self, lp: LocalPack | None) -> str:
+        if lp is None:
+            return "plain"
+        if lp.official or (self.catalog is not None and self.catalog.get(lp.id) is not None):
+            return "city"
+        return "studio"
+
+    def _set_scene(self, lp: LocalPack | None, animate: bool = False) -> None:
+        if self.window is None or not hasattr(self.window, "scene"):
+            return
+        kind = self.scene_kind(lp) if self.ctx.settings.backgrounds else "plain"
+        self.window.scene.set_scene(kind, animate=animate, force=animate)
+        if kind == "studio" and hasattr(self.window.scene, "studio"):
+            from netlauncher.ui.supporter import active
+            styled = active(self.ctx)
+            self.window.scene.studio.set_style(lp.backdrop if styled else "studio", lp.pose if styled else "idle")
+            self.window.scene.update()
+
+    def update_scene(self) -> None:
+        self._set_scene(self.current_pack() if self.mode() == "pack" else None)
+
+    def pick_pack(self, pack_id: str) -> None:
+        if pack_id == self.ctx.settings.selected_pack:
+            return
         self.ctx.settings.selected_pack = pack_id
         self.ctx.save()
-        self.refresh()
+        self._switching = True
+        try:
+            self.refresh()
+        finally:
+            self._switching = False
+        p = self.panel
+        anim.stagger([p.title, p.desc, p.meta, p.play_btn], step_ms=60)
+
+    _pick_pack = pick_pack
+
+    def eventFilter(self, obj: QObject, e: QEvent) -> bool:  # noqa: N802
+        if obj is self.panel.play_btn and self.window is not None and hasattr(self.window, "skin"):
+            if e.type() == QEvent.Type.Enter and self.window.skin.reaction == "idle":
+                self.window.skin_react("ready")
+            elif e.type() == QEvent.Type.Leave and self.window.skin.reaction == "ready":
+                self.window.skin_react("idle")
+        return super().eventFilter(obj, e)
+
+    def play_action(self) -> str:
+        """'update' when an installed official pack has a newer version in the catalog, else 'play'."""
+        lp = self.current_pack()
+        entry = self.catalog.get(lp.id) if (self.catalog and lp) else None
+        return "update" if entry is not None and is_newer(entry.version, lp.version) else "play"
+
+    def _play_clicked(self) -> None:
+        if self.play_action() == "update":
+            self._update()
+            return
+        if self.window is not None and hasattr(self.window, "skin_react"):
+            self.window.skin_react("turn_head")
+        self.play()
 
     def _on_login(self, acc: Account) -> None:
         self.refresh()
         self._load_skin(acc)
 
     def _load_skin(self, acc: Account | None) -> None:
+        self._skin_request += 1
+        request = self._skin_request
+        identity = acc.uuid if acc else None
+        if self.skin_account != identity:
+            self.account_skin = None
+            self.skin_account = identity
         if acc is None:
             return
+        def loaded(value):
+            current = self.ctx.accounts.load()
+            if request == self._skin_request and current and current.uuid == identity:
+                self._skin_loaded(value)
         jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache),
-                 on_done=self._skin_loaded, on_error=lambda e: None)
+                 on_done=loaded, on_error=lambda e: None)
 
     # ---------- skin change ----------
     def pick_skin(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Файл скина", str(Path.home()), "Скины (*.png)")
+        path, _ = QFileDialog.getOpenFileName(self, t('Файл скина'), str(Path.home()), t('Скины (*.png)'))
         if path:
             self.preview_skin(Path(path))
 
@@ -829,15 +934,15 @@ class HomePage(QWidget):
             data = Path(path).read_bytes()
             skin.check_skin(data)
         except (OSError, ValueError) as e:
-            p.skin_hint.setText(str(e) if isinstance(e, ValueError) else "Не получилось открыть файл.")
+            p.skin_hint.setText(t(str(e)) if isinstance(e, ValueError) else t('Не получилось открыть файл.'))
             return
         self._preview_png = data
-        p.skin_hint.setText("Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.")
-        p.model.set_skin(skin.Skin(data, p.slim.isChecked()), entrance=False)
+        p.skin_hint.setText(t('Это предпросмотр. Чтобы скин видели все, загрузи его на Ely.by.'))
+        self._scene_skin(skin.Skin(data, p.slim.isChecked()))
 
     def _slim_changed(self, on: bool) -> None:
         if self._preview_png is not None:
-            self.panel.model.set_skin(skin.Skin(self._preview_png, on), entrance=False)
+            self._scene_skin(skin.Skin(self._preview_png, on))
 
     def cancel_skin_preview(self) -> None:
         self._preview_png = None
@@ -848,39 +953,61 @@ class HomePage(QWidget):
         acc = self.ctx.accounts.load()
         if acc is None:
             return
-        self.panel.skin_hint.setText("Загружаю скин с Ely.by")
+        self.panel.skin_hint.setText(t('Загружаю скин с Ely.by'))
+        self._skin_request += 1
+        request = self._skin_request
+        def current():
+            account = self.ctx.accounts.load()
+            return request == self._skin_request and account and account.uuid == acc.uuid
         jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache, force=True),
-                 on_done=self._skin_reloaded, on_error=lambda e: self.panel.skin_hint.setText(_error_text(e)))
+                 on_done=lambda value: self._skin_reloaded(value) if current() else None,
+                 on_error=lambda e: self.panel.skin_hint.setText(_error_text(e)) if current() else None)
 
     def _skin_reloaded(self, sk) -> None:
         self._preview_png = None
         if sk is None:
-            self.panel.skin_hint.setText("На Ely.by у аккаунта нет скина.")
+            self.panel.skin_hint.setText(t('На Ely.by у аккаунта нет скина.'))
             return
         self.panel.skin_bar.hide()
         self._skin_loaded(sk)
 
     def _skin_loaded(self, sk) -> None:
+        self.account_skin = sk
+        page = getattr(self.window, "_pages", {}).get("profile")
+        if page and hasattr(page, "show_account_skin"):
+            page.show_account_skin(sk, self.skin_account)
         if sk is None:
             return
         if self._preview_png is None:
-            self.panel.model.set_skin(sk)
+            self._scene_skin(sk)
         if self.window is not None and hasattr(self.window, "set_face"):
             self.window.set_face(face(sk.png))
 
-    def _load_catalog(self) -> None:
-        jobs.run(lambda progress: resolve_catalog(self.ctx.http), on_done=self._catalog_loaded,
-                 on_error=lambda e: None)
+    def _scene_skin(self, sk) -> None:
+        if self.window is not None and hasattr(self.window, "skin"):
+            self.window.skin.set_skin(sk)
 
-    def _catalog_loaded(self, cat: Catalog | None) -> None:
+    def _load_catalog(self) -> None:
+        self.startup_done = False
+        jobs.run(lambda progress: resolve_catalog(self.ctx.http), on_done=self._catalog_loaded,
+                 on_error=lambda e: self._catalog_loaded(None, offline=isinstance(e, Offline)))
+
+    def _catalog_loaded(self, cat: Catalog | None, offline: bool = False) -> None:
         self.catalog = cat
         self.ctx.catalog = cat
+        if self.window and hasattr(self.window, "set_offline"):
+            self.window.set_offline(offline)
+        self.startup_done = True
+        if self.window is not None and hasattr(self.window, "offer_update"):
+            self.window.offer_update(cat)
+            if self.window.current_page() == "official":
+                self.window.page("official").refresh_cards()
         if self.mode() in ("pack", "empty"):
             self.refresh()
 
     # ---------- install / update / import ----------
     def install_entry(self, entry: PackEntry) -> None:
-        self.busy.start(f"Установка {entry.name}")
+        self.busy.start(t('Установка {name}', name=entry.name))
         self._set_mode("install")
         jobs.run(self._install_job, entry, on_done=self._installed, on_error=self._install_failed,
                  on_progress=self.busy.progress)
@@ -888,13 +1015,18 @@ class HomePage(QWidget):
     def _install_job(self, entry: PackEntry, progress):
         lay = self.ctx.lay
         gd = localpacks.game_dir(lay, entry.id)
-        progress("Скачиваю описание сборки", 0, 0)
+        progress(t('Скачиваю описание сборки'), 0, 0)
         mp_path = self.ctx.http.download(entry.mrpack_url, lay.cache / "packs" / f"{entry.id}-{entry.version}.mrpack",
                                          sha1=entry.mrpack_sha1 or None)
         pack = MrPack.open(mp_path)
-        plan = plan_update(pack, gd, load_state(gd))
+        state = load_state(gd)
+        if state is not None:
+            from netlauncher import worlds
+            progress(t('Сохраняю копии миров'), 0, 0)
+            worlds.backup_all(lay, entry.id, gd)
+        plan = plan_update(pack, gd, state)
         apply_update(plan, pack, gd, self.ctx.http, lay.cache, lay.snapshots / entry.id,
-                     lambda name, cur, mx: progress(f"Скачиваю {name}", cur, mx))
+                     lambda name, cur, mx: progress(t('Скачиваю {name}', name=name), cur, mx))
         localpacks.save(lay, localpacks.from_entry(entry))
         self.ctx.installer.ensure(entry.mc_version, entry.loader, entry.loader_version,
                                   lambda s, c, m: progress(f"Minecraft: {s}", c, m))
@@ -925,10 +1057,10 @@ class HomePage(QWidget):
 
     def import_instance(self, inst: Path) -> None:
         default = ".NET" if inst.name[:1].isdigit() else inst.name
-        name, ok = QInputDialog.getText(self, "Название сборки", "Как назвать сборку в лаунчере?", text=default)
+        name, ok = QInputDialog.getText(self, t('Название сборки'), t('Как назвать сборку в лаунчере?'), text=default)
         if not ok or not name.strip():
             return
-        self.busy.start(f"Перенос {name.strip()}")
+        self.busy.start(t('Перенос {x1}', x1=name.strip()))
         self._set_mode("install")
         jobs.run(self._import_job, inst, name.strip(), on_done=lambda r: self.refresh(),
                  on_error=self._install_failed, on_progress=self.busy.progress)
@@ -939,7 +1071,7 @@ class HomePage(QWidget):
         existing = {p.id for p in localpacks.list_installed(lay)}
         pid = new_pack_id(name, existing)
         gd = localpacks.game_dir(lay, pid)
-        import_instance(inst, gd, lambda item, cur, mx: progress(f"Копирую {item}", cur, mx))
+        import_instance(inst, gd, lambda item, cur, mx: progress(t('Копирую {item}', item=item), cur, mx))
         localpacks.save(lay, LocalPack(pid, name, "0.0", mc, loader, lv))
         self.ctx.installer.ensure(mc, loader, lv, lambda s, c, m: progress(f"Minecraft: {s}", c, m))
         self.ctx.settings.selected_pack = pid
@@ -953,12 +1085,16 @@ class HomePage(QWidget):
 
     def create_pack(self, name: str, mc: str, loader: str, lv: str) -> None:
         from netlauncher import instances
-        self.busy.start(f"Создаю {name}")
+        use_fps = self.creator.fps.isChecked()
+        self.busy.start(t('Создаю {name}', name=name))
         self._set_mode("install")
 
         def job(progress):
             lp = instances.create(self.ctx.lay, name, mc, loader, lv)
             self.ctx.installer.ensure(mc, loader, lv, lambda s, c, m: progress(f"Minecraft: {s}", c, m))
+            if use_fps:
+                from netlauncher import fps
+                fps.configure(self.ctx, lp, True, progress)
             return lp
 
         def done(lp):
@@ -988,17 +1124,52 @@ class HomePage(QWidget):
         lp = self.current_pack()
         if lp is None or self.proc is not None:
             return
+        if self.play_action() == "update":
+            self._update()
+            return
         self.panel.crash_box.hide()
         self._set_playing(True)
-        self.panel.status.setText("Проверяю вход и файлы игры")
+        self.panel.status.setText(t('Проверяю вход и файлы игры'))
         self.panel.percent.setText("")
         self.panel.bar.set_fraction(0.01)
 
+        locked = localpacks.locked(lp, self.ctx.settings, self.catalog)
+        entry = self.catalog.get(lp.id) if self.catalog else None
+        mrpack_url = entry.mrpack_url if entry and entry.version == lp.version else ""
+        has_catalog = self.catalog is not None
+
+        def verify(progress):
+            from netlauncher import integrity
+            progress(t('Проверяю файлы сборки'), 0, 0)
+            gd = localpacks.game_dir(self.ctx.lay, lp.id)
+            report = integrity.check(gd, load_state(gd))
+            if report.ok:
+                return
+            progress(t('Возвращаю файлы сборки'), 0, 0)
+            try:
+                left = integrity.repair(report, self.ctx.lay, lp, self.ctx.http,
+                                        lambda name, c, m: progress(t('Скачиваю {name}', name=name), c, m),
+                                        mrpack_url=mrpack_url)
+            except Offline as e:
+                raise integrity.NeedsInternet() from e
+            except integrity.NoPackFile as e:
+                if not has_catalog:
+                    raise integrity.NeedsInternet() from e
+                raise integrity.NotRepaired(report) from e
+            if left.missing or left.changed:
+                raise integrity.NotRepaired(left)
+
+        disconnected = bool(getattr(self.window, "offline", False))
+
         def prepare(progress):
-            acc = ensure_valid(self.ctx.auth, self.ctx.accounts)
+            if locked:
+                verify(progress)
+            acc = ensure_valid(self.ctx.auth, self.ctx.accounts, disconnected=disconnected)
             game = self.ctx.installer.ensure(lp.mc_version, lp.loader, lp.loader_version,
                                              lambda s, c, m: progress(f"Minecraft: {s}", c, m))
-            authlib = self.ctx.installer.ensure_authlib()
+            if acc.offline and server:
+                raise ValueError(t('Для игры на сервере нужен вход через Ely.by и интернет.'))
+            authlib = None if acc.offline else self.ctx.installer.ensure_authlib()
             return acc, game, authlib
 
         jobs.run(prepare, on_done=lambda r: self._launch(lp, r, world, server), on_error=self._prepare_failed,
@@ -1008,33 +1179,39 @@ class HomePage(QWidget):
         self._set_playing(False)
         self.panel.bar.set_fraction(0)
         if isinstance(e, NeedLogin):
-            self.login.set_message("Сессия Ely.by истекла. Войди ещё раз.")
+            self.login.set_message(t('Сессия Ely.by истекла. Войди ещё раз.'))
             self.refresh()
             return
         self.panel.status.setText(_error_text(e))
 
     def _launch(self, lp: LocalPack, prepared, world, server) -> None:
         acc, game, authlib = prepared
+        if self.window and hasattr(self.window, "set_offline") and not getattr(self.ctx.accounts.load(), "offline", False):
+            self.window.set_offline(acc.offline)
         s = self.ctx.settings
         gd = localpacks.game_dir(self.ctx.lay, lp.id)
         ram = s.max_ram_mb or recommended_ram_mb(localpacks.total_ram_mb())
         spec = LaunchSpec(game, self.ctx.lay.minecraft, gd, acc, ram, s.fullscreen, s.width, s.height, authlib,
-                          world=world, server=server)
+                          world=world, server=server, fps=lp.fps)
         try:
             apply_fullscreen(gd, s.fullscreen)
             cmd = build_command(spec)
             self.proc = self.process_factory(gd)
             self._started_at = time.time()
+            self._session_log = coop.SessionLog(self.proc.log_path)
+            self._hosting = lp if not server and not getattr(acc, "offline", False) and (gd / coop.OPT_IN).is_file() else None
+            self._announced = set()
             self.proc.start(cmd, gd)
+            if self.window is not None and hasattr(self.window, "set_game_running"):
+                self.window.set_game_running(True)
         except Exception as e:  # noqa: BLE001
             self.proc = None
             self._prepare_failed(e)
             return
         self.progress = LogProgress()
-        self._log_offset = 0
         self._last_line_at = time.time()
         self._hidden_for_game = False
-        self.panel.status.setText("Запускаю игру")
+        self.panel.status.setText(t('Запускаю игру'))
         if self.window is not None:
             self.window.game_status = ("playing", lp.name, server or "")
         self.timer.start()
@@ -1054,32 +1231,32 @@ class HomePage(QWidget):
             self._finished(code)
 
     def _read_log(self) -> None:
-        path = self.proc.log_path
-        try:
-            st = path.stat()
-        except OSError:
-            return
-        if st.st_mtime < self._started_at - 2:
-            return  # still the previous session's log
-        if st.st_size < self._log_offset:
-            self._log_offset = 0
-        if st.st_size == self._log_offset:
-            return
-        with open(path, "rb") as f:
-            f.seek(self._log_offset)
-            chunk = f.read()
-        last_nl = chunk.rfind(b"\n")
-        if last_nl < 0:
-            return
-        self._log_offset += last_nl + 1
-        self._last_line_at = time.time()
-        for line in chunk[: last_nl + 1].decode("utf-8", "replace").splitlines():
+        lines = self._session_log.lines()
+        if lines:
+            self._last_line_at = time.time()
+        for line in lines:
+            if self._hosting and (domain := coop.assigned_domain(line)) and domain not in self._announced:
+                self._announced.add(domain)
+                self._invite_to_world(self._hosting, domain)
             ev = self.progress.feed(line)
             if ev:
                 self._show_stage(*ev)
 
+    def _invite_to_world(self, pack, domain):
+        if not self.window or not self.ctx.friends_url():
+            return
+        gd = localpacks.game_dir(self.ctx.lay, pack.id)
+        if not (gd / coop.OPT_IN).is_file():
+            return
+        identity = coop.source_id(self.ctx.lay, pack)
+        self.window.game_status = ("playing", pack.name, domain)
+        self.window.game_pack = {"pack_id": identity, "pack_version": pack.version}
+        client = self.ctx.friends()
+        jobs.run(lambda progress: coop.invite_friends(client, pack.name, identity, pack.version, domain),
+                 on_error=lambda exc: self.window.toast(str(exc)))
+
     def _show_stage(self, stage: Stage, frac: float) -> None:
-        self.panel.status.setText(stage.value)
+        self.panel.status.setText(t(stage.value))
         self.panel.bar.set_fraction(frac)
         self.panel.percent.setText(f"{round(frac * 100)} %")
         if stage in (Stage.MENU, Stage.WORLD) and not self._hidden_for_game and self.window is not None:
@@ -1089,8 +1266,11 @@ class HomePage(QWidget):
     def _finished(self, code: int) -> None:
         self.timer.stop()
         self.proc = None
+        if self.window is not None and hasattr(self.window, "set_game_running"):
+            self.window.set_game_running(False)
         if self.window is not None:
             self.window.game_status = ("launcher", "", "")
+            self.window.game_pack = {}
         self._set_playing(False)
         self.panel.bar.set_fraction(0)
         self.panel.percent.setText("")
@@ -1105,12 +1285,12 @@ class HomePage(QWidget):
         if info:
             parts = [info.description, info.cause]
             if info.suspects:
-                parts.append(f"Возможная причина: {info.suspects}")
+                parts.append(t('Возможная причина: {suspects}', suspects=info.suspects))
             self.panel.crash_text.setText("\n".join(x for x in parts if x))
             self._crash_report = info.report
             self.panel.crash_open.show()
         else:
-            self.panel.crash_text.setText(f"Код выхода {code}. Отчёта о вылете нет, подробности в logs/latest.log.")
+            self.panel.crash_text.setText(t('Код выхода {code}. Отчёта о вылете нет, подробности в logs/latest.log.', code=code))
             self._crash_report = None
             self.panel.crash_open.hide()
         self.panel.status.setText("")

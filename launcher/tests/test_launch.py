@@ -157,3 +157,8 @@ def test_authlib_sha256_and_cache(tmp_path):
     with pytest.raises(HashMismatch):
         GameInstaller(lay, bad).ensure_authlib()
     assert not (lay.cache / "authlib-injector-1.2.8.jar").exists()
+
+
+def test_offline_launch_with_fps(tmp_path, echo):
+    cmd = build_command(spec(tmp_path, authlib=None, fps=True))
+    assert "-XX:+UseG1GC" in cmd and not any(arg.startswith("-javaagent:") for arg in cmd)

@@ -50,3 +50,12 @@ def test_settings_file_private(home):
     import os
     save_settings(home.settings_file, Settings(github_token="ghp_secret", curseforge_key="cfkey"))
     assert oct(os.stat(home.settings_file).st_mode & 0o777) == "0o600"
+
+
+def test_old_theme_key_is_ignored(home):
+    import dataclasses
+    home.settings_file.parent.mkdir(parents=True, exist_ok=True)
+    home.settings_file.write_text('{"theme": "glass", "animations": false}', encoding="utf-8")
+    s = load_settings(home.settings_file)
+    assert s.animations is False
+    assert "theme" not in {f.name for f in dataclasses.fields(Settings)}

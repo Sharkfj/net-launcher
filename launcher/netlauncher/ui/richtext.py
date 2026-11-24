@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 
 import markdown as md
@@ -20,6 +22,73 @@ a { color: #6AAEFF; }
 code { background: rgba(255,255,255,0.06); }
 img { max-width: 100%; }
 """
+
+
+class _ImageParagraphs(HTMLParser):
+    """Split surrounding paragraphs/inline markup so Qt allocates each image its own block."""
+
+    inline = {"a", "b", "big", "code", "del", "em", "font", "i", "ins", "small", "span", "strong",
+              "sub", "sup", "u"}
+    stripped = {"width", "height", "align", "style", "hspace", "vspace"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out = []
+        self.context = []
+        self.pending = []
+
+    def _flush(self):
+        self.out.extend(self.pending)
+        self.pending.clear()
+
+    def handle_starttag(self, tag, attrs):
+        raw = self.get_starttag_text()
+        if tag == "img":
+            # Close any text before the image, then resume its formatting at the next text.
+            opened = self.context[:len(self.context) - len(self.pending)]
+            self.out.extend(f"</{name}>" for name, _ in reversed(opened))
+            source = " ".join(f'{key}="{escape(val or "", quote=True)}"' for key, val in attrs
+                              if key not in self.stripped)
+            links = [raw for name, raw in self.context if name == "a"]
+            self.out.extend(["<p>", *links, f"<img {source}>", *("</a>" for _ in links), "</p>"])
+            self.pending = [raw for _, raw in self.context]
+        elif tag == "p" or tag in self.inline:
+            self.context.append((tag, raw))
+            self.pending.append(raw)
+        else:
+            self._flush()
+            self.out.append(raw)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if self.context and self.context[-1][0] == tag:
+            self.context.pop()
+            if self.pending:
+                self.pending.pop()
+                return
+        self._flush()
+        self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self._flush()
+        self.out.append(data)
+
+    def handle_entityref(self, name):
+        self.handle_data(f"&{name};")
+
+    def handle_charref(self, name):
+        self.handle_data(f"&#{name};")
+
+
+def clean_html(html: str) -> str:
+    if "<img" not in html.lower():
+        return html
+    parser = _ImageParagraphs()
+    parser.feed(html)
+    parser.close()
+    return "".join(parser.out)
 
 
 class RichText(QTextBrowser):
@@ -47,7 +116,7 @@ class RichText(QTextBrowser):
         for m in self._movies.values():
             m.stop()
         self._movies.clear()
-        self._html = html or ""
+        self._html = clean_html(html or "")
         self.setHtml(self._html)
 
     def loaded(self, url: str) -> bool:

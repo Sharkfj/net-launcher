@@ -1,4 +1,4 @@
-"""Export the app icon (drawn in netlauncher/ui/icons.py) to PNG and ICO."""
+"""Export the app icon (netlauncher/ui/assets/icon/icon.png, rendered by tools/render_icon.py) to PNG and ICO."""
 import os
 import sys
 from pathlib import Path

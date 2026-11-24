@@ -41,6 +41,33 @@ def err(status, msg):
     return HttpError(status, "x", json.dumps({"errorMessage": msg}))
 
 
+def test_version_lists_fit_seven_rows_and_keep_keyboard_navigation(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from netlauncher.ui.pages.home import CreatePanel
+
+    panel = CreatePanel()
+    panel.show()
+    panel.activateWindow()
+    assert QTest.qWaitForWindowExposed(panel)
+    try:
+        for combo in (panel.version, panel.loader_version):
+            combo.blockSignals(True)
+            combo.addItems([str(i) for i in range(300)])
+            combo.showPopup()
+            qapp.processEvents()
+            view = combo.view()
+            assert view.window().height() <= 7 * view.sizeHintForRow(0) + 32
+            assert view.viewport().rect().contains(view.visualRect(view.model().index(6, 0)))
+            assert view.verticalScrollBar().isVisible()
+            QTest.keyClick(view, Qt.Key.Key_Down)
+            QTest.keyClick(view, Qt.Key.Key_Return)
+            assert combo.currentText() == "1"
+            assert not view.isVisible()
+    finally:
+        panel.close()
+
+
 class FakeProcess:
     def __init__(self, game_dir):
         self.game_dir = game_dir
@@ -108,7 +135,7 @@ def test_login_success_shows_pack_and_account(make):
     home.login.password.setText("pw")
     home.login.submit()
     pump(until=lambda: home.mode() == "pack")
-    assert home.mode() == "pack" and w.sidebar.account.text() == "Shark"
+    assert home.mode() == "pack" and w.rail.account_name == "Shark"
     assert ctx.accounts.load().name == "Shark"
 
 
@@ -209,9 +236,9 @@ def test_home_loads_skin_into_model_and_avatar(make):
                                                                    "metadata": {"model": "slim"}}}},
                     downloads={"http://ely.by/s.png": png})
     w, page, ctx = make(http=http)
-    pump(until=lambda: page.panel.model.skin_png == png)
-    assert page.panel.model.skin_png == png and page.panel.model.slim
-    assert w.sidebar.avatar.has_face()
+    pump(until=lambda: w.skin.skin_png == png)
+    assert w.skin.skin_png == png and w.skin.slim
+    assert w.rail.avatar.has_face()
 
 
 def test_progress_bar_hidden_when_idle(make, monkeypatch):
@@ -234,9 +261,9 @@ def test_skin_preview_from_file(make, tmp_path):
     f.write_bytes(png)
     assert not page.panel.skin_bar.isVisibleTo(page.panel)
     page.preview_skin(f)
-    assert page.panel.model.skin_png == png and page.panel.skin_bar.isVisibleTo(page.panel)
+    assert w.skin.skin_png == png and page.panel.skin_bar.isVisibleTo(page.panel)
     page.panel.slim.click()
-    assert page.panel.model.slim
+    assert w.skin.slim
     bad = tmp_path / "bad.png"
     bad.write_bytes(b"xx")
     page.preview_skin(bad)
@@ -245,7 +272,7 @@ def test_skin_preview_from_file(make, tmp_path):
     assert not page.panel.skin_bar.isVisibleTo(page.panel)
 
 
-def test_first_run_theme_choice(qapp, home, monkeypatch):
+def test_first_run_has_no_theme_choice(qapp, home, monkeypatch):
     anim.set_enabled(False)
     monkeypatch.setattr("netlauncher.ui.pages.home.resolve_catalog", lambda http: None)
     ctx = make_context(home, FakeHttp())
@@ -253,13 +280,10 @@ def test_first_run_theme_choice(qapp, home, monkeypatch):
     w.show()
     page = w.page("home")
     assert page.mode() == "welcome"
-    assert [c.title for c in page.welcome.cards] == ["Стекло", "Сплошная"]
-    page.welcome.pick("solid")
-    assert w.theme == "solid" and not w.blurred
-    page.welcome.next_btn.click()
-    assert page.mode() == "login" and ctx.settings.theme == "solid" and ctx.settings.first_run_done
-    from netlauncher.settings import load_settings
-    assert load_settings(ctx.lay.settings_file).theme == "solid"
+    assert not hasattr(page.welcome, "cards")
+    assert not hasattr(w, "theme") and not hasattr(w, "blurred") and not hasattr(w, "set_theme")
+    page.welcome.done.emit()
+    assert page.mode() == "login" and ctx.settings.first_run_done is True
     anim.set_enabled(True)
 
 
@@ -328,3 +352,241 @@ def test_empty_state_has_create(make, monkeypatch):
     monkeypatch.setattr(instances, "minecraft_releases", lambda: ["1.21.1"])
     page.empty.create_btn.click()
     assert page.mode() == "create"
+
+
+def _own_pack(home):
+    localpacks.save(home, LocalPack("mine", "Выживание с друзьями", "", "1.21.1", "fabric", "0.16.9"))
+
+
+def test_scene_kind_by_pack(make):
+    w, page, ctx = make()
+    official = LocalPack("net", ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", official=True)
+    own = LocalPack("mine", "Своя", "", "1.21.1", "fabric", "0.16.9")
+    assert page.scene_kind(official) == "city"
+    assert page.scene_kind(own) == "studio"
+    assert page.scene_kind(None) == "plain"
+
+
+def test_catalog_pack_counts_as_official(make):
+    from netlauncher.catalog import Catalog, PackEntry
+    cat = Catalog("0.2.2", {}, [PackEntry("net", ".NET", "", "0.1", "1.21.1", "neoforge", "21.1.267", "", "")])
+    w, page, ctx = make(catalog=cat)
+    pump(until=lambda: page.catalog is not None)
+    assert page.scene_kind(localpacks.get(ctx.lay, "net")) == "city" and w.scene.kind == "city"
+
+
+def test_switch_pack_dissolves(make, home):
+    _own_pack(home)
+    w, page, ctx = make()
+    anim.set_enabled(True)
+    page.pick_pack("mine")
+    assert w.scene.transition_active()
+    pump(1000)
+    assert w.scene.kind == "studio" and not w.scene.transition_active()
+    assert page.panel.title.text() == "Выживание с друзьями"
+
+
+def test_play_hover_and_press_reactions(make, home, monkeypatch):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QEnterEvent
+    _own_pack(home)
+    w, page, ctx = make()
+    page.pick_pack("mine")
+    QApplication.sendEvent(page.panel.play_btn, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
+    assert w.skin.reaction == "ready"
+    QApplication.sendEvent(page.panel.play_btn, QEvent(QEvent.Type.Leave))
+    assert w.skin.reaction == "idle"
+    monkeypatch.setattr(page, "play", lambda world=None, server=None: None)
+    page.panel.play_btn.click()
+    assert w.skin.reaction == "turn_head"
+
+
+def test_display_font_is_oswald(qapp):
+    from PySide6.QtGui import QFontDatabase
+    from netlauncher.ui import theme as th
+    assert th.DISPLAY == "Oswald" and "Oswald" in QFontDatabase.families()
+
+
+def test_game_running_pauses_scene(make, monkeypatch):
+    w, page, ctx = make()
+    w.set_game_running(True)
+    assert not w.scene.running()
+    w.set_game_running(False)
+    assert "game" not in w.scene._paused
+
+
+def test_welcome_asks_shortcut_once(qapp, home, monkeypatch):
+    from pathlib import Path
+    anim.set_enabled(False)
+    monkeypatch.setattr("netlauncher.ui.pages.home.resolve_catalog", lambda http: None)
+    made = []
+    monkeypatch.setattr("netlauncher.shortcut.create", lambda cmd, icon, name=".NET Launcher": made.append(cmd) or Path("/x"))
+    ctx = make_context(home, FakeHttp())
+    w = MainWindow(ctx, page_factory=FACTORY)
+    w.show()
+    page = w.page("home")
+    assert page.welcome.shortcut.isChecked()
+    page.welcome.next_btn.click()
+    assert len(made) == 1 and ctx.settings.shortcut_asked is True
+    page.welcome.done.emit()
+    assert len(made) == 1
+    anim.set_enabled(True)
+
+
+def test_microsoft_login_button_in_development(make):
+    w, page, ctx = make(account=False)
+    btn = page.login.ms_button
+    assert not btn.isEnabled() and btn.text() == "Войти через Microsoft"
+    assert page.login.ms_note.text() == "В разработке"
+
+
+def test_microsoft_login_english(make):
+    from netlauncher import i18n
+    from netlauncher.i18n_en import EN
+    assert EN["Войти через Microsoft"] == "Sign in with Microsoft" and EN["В разработке"] == "In development"
+
+
+def test_backup_before_official_update(make, home, monkeypatch):
+    from netlauncher import localpacks as lpm
+    from netlauncher import pack as packmod
+    seen = {}
+
+    def fake_apply(plan, pk, gd, http, cache, snaps, progress=None):
+        seen["backups"] = sorted(p.name for p in (home.backups / "net").glob("*/*.zip"))
+    monkeypatch.setattr("netlauncher.ui.pages.home.apply_update", fake_apply)
+    monkeypatch.setattr("netlauncher.ui.pages.home.MrPack", type("P", (), {"open": staticmethod(
+        lambda p: type("X", (), {"index": None})())}))
+    monkeypatch.setattr("netlauncher.ui.pages.home.plan_update", lambda pk, gd, st: type("U", (), {"manual_missing": []})())
+    monkeypatch.setattr("netlauncher.ui.pages.home.load_state", lambda gd: {"version": "0.1", "files": {}})
+    w, page, ctx = make()
+    gd = lpm.game_dir(ctx.lay, "net")
+    (gd / "saves" / "Город").mkdir(parents=True)
+    (gd / "saves" / "Город" / "level.dat").write_bytes(b"x")
+    monkeypatch.setattr(ctx.http, "download", lambda url, dest, sha1=None, sha512=None, progress=None: dest, raising=False)
+    monkeypatch.setattr(ctx.installer, "ensure", lambda *a, **k: None)
+    entry = PackEntry("net", ".NET", "", "0.2", "1.21.1", "neoforge", "21.1.267", "https://x/net.mrpack", "")
+    page._install_job(entry, lambda *a: None)
+    assert len(seen["backups"]) == 1
+
+
+def _official(home):
+    localpacks.save(home, LocalPack("net", ".NET", "0.1", "1.21.1", "neoforge", "21.1.267", "Киберпанк", "",
+                                    official=True))
+
+
+def test_play_runs_check_for_locked_pack_only(make, monkeypatch, home):
+    from netlauncher import integrity
+    checked = []
+    monkeypatch.setattr(integrity, "check", lambda gd, st: checked.append(gd) or integrity.Report())
+    w, page, ctx = make()
+    procs = _ready_game(monkeypatch, page)
+    page.play()
+    pump(until=lambda: bool(procs) and procs[0].cmd is not None)
+    assert checked == []
+    procs[0].code = 0
+    pump(until=lambda: page.panel.play_btn.isEnabled())
+    _official(home)
+    page.refresh()
+    page.play()
+    pump(until=lambda: len(procs) == 2 and procs[1].cmd is not None)
+    assert checked == [home.instances / "net"]
+
+
+def test_play_repairs_broken_official_pack(make, monkeypatch, home):
+    from netlauncher import integrity
+    repaired = []
+    monkeypatch.setattr(integrity, "check", lambda gd, st: integrity.Report(extra=["mods/cheat.jar"]))
+    monkeypatch.setattr(integrity, "repair",
+                        lambda report, lay, lp, http, progress, mrpack_url="": repaired.append(report.extra) or integrity.Report())
+    _official(home)
+    w, page, ctx = make(pack=False)
+    procs = _ready_game(monkeypatch, page)
+    page.play()
+    pump(until=lambda: bool(procs) and procs[0].cmd is not None)
+    assert repaired == [["mods/cheat.jar"]]
+
+
+def test_play_offline_with_broken_official_pack(make, monkeypatch, home):
+    from netlauncher import integrity
+    from netlauncher.net import Offline
+
+    def offline_repair(*a, **k):
+        raise Offline("x")
+    monkeypatch.setattr(integrity, "check", lambda gd, st: integrity.Report(missing=["mods/a.jar"]))
+    monkeypatch.setattr(integrity, "repair", offline_repair)
+    _official(home)
+    w, page, ctx = make(pack=False)
+    procs = _ready_game(monkeypatch, page)
+    page.play()
+    pump(until=lambda: page.panel.play_btn.isEnabled() and page.panel.status.text() != "Проверяю вход и файлы игры")
+    assert procs == []
+    assert page.panel.status.text() == "Часть файлов сборки пропала или изменилась. Подключись к интернету, и лаунчер вернёт их."
+
+
+def _cat(version="0.2", pack_id="net"):
+    return Catalog("0.1.0", {}, [PackEntry(pack_id, ".NET", "Киберпанк", version, "1.21.1", "neoforge", "21.1.267",
+                                           "https://x/net.mrpack", "s", "Новые моды")])
+
+
+def test_play_becomes_update_when_newer(make, home):
+    _official(home)
+    w, page, ctx = make(pack=False, catalog=_cat("0.2"))
+    pump(until=lambda: page.play_action() == "update")
+    assert page.panel.play_btn.text() == "Обновить"
+    assert not page.panel.update_btn.isVisibleTo(page.panel)
+    assert not page.panel.continue_btn.isVisibleTo(page.panel) and not page.panel.server_btn.isVisibleTo(page.panel)
+    assert "0.2" in page.panel.update_label.text()
+
+
+def test_update_button_runs_update(make, home, monkeypatch):
+    _official(home)
+    w, page, ctx = make(pack=False, catalog=_cat("0.2"))
+    pump(until=lambda: page.play_action() == "update")
+    started = []
+    monkeypatch.setattr(page, "install_entry", lambda entry: started.append(entry.version))
+    page.panel.play_btn.click()
+    assert started == ["0.2"]
+    page.play()
+    assert started == ["0.2", "0.2"]
+
+
+def test_offline_keeps_play(make, home):
+    _official(home)
+    w, page, ctx = make(pack=False, catalog=None)
+    pump(50)
+    assert page.play_action() == "play" and page.panel.play_btn.text() == "Играть"
+
+
+def test_same_version_keeps_play(make, home):
+    _official(home)
+    w, page, ctx = make(pack=False, catalog=_cat("0.1"))
+    pump(50)
+    assert page.play_action() == "play" and page.panel.play_btn.text() == "Играть"
+
+
+def test_own_pack_never_update(make, home):
+    localpacks.save(home, LocalPack("mine", "Своя", "", "1.21.1", "fabric", "0.16.9"))
+    w, page, ctx = make(pack=False, catalog=_cat("0.2"))
+    page.pick_pack("mine")
+    pump(50)
+    assert page.play_action() == "play" and page.panel.play_btn.text() == "Играть"
+
+
+def test_guest_can_open_an_installed_pack(make, monkeypatch):
+    w, page, ctx = make(account=False)
+    monkeypatch.setattr("netlauncher.ui.pages.home.QInputDialog.getText", lambda *args: ("Local_42", True))
+    page.login.guest_btn.click()
+    assert ctx.accounts.load().offline and page.mode() == "pack"
+
+
+def test_disconnected_player_keeps_ely_world_identity(make, monkeypatch):
+    w, page, ctx = make(http=FakeHttp(offline=True))
+    stored = ctx.accounts.load()
+    _ready_game(monkeypatch, page)
+    seen = []
+    monkeypatch.setattr("netlauncher.ui.pages.home.build_command", lambda spec: seen.append(spec) or ["java"])
+    page.play()
+    pump(until=lambda: seen)
+    assert seen and seen[0].authlib is None
+    assert seen[0].account.uuid == stored.uuid and seen[0].account.access_token == "0"
+    assert ctx.accounts.load() == stored and w.offline

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import hashlib
 
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
@@ -10,7 +12,7 @@ from PySide6.QtGui import QDesktopServices, QPainter, QPixmap
 from PySide6.QtWidgets import QComboBox, QLineEdit, QMenu, QScrollArea, QStackedWidget, QWidget
 
 from netlauncher import localpacks
-from netlauncher.curseforge import CurseForge, NotDistributable
+from netlauncher.curseforge import NotDistributable, for_context
 from netlauncher.library import AlreadyInstalled, Library, Locked, NotAvailable
 from netlauncher.modrinth import search_loader
 from netlauncher.pack import load_state
@@ -19,7 +21,7 @@ from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, human_downloads, label, plural, vbox
 from netlauncher.ui.pages.home import Chip, _error_text
 from netlauncher.ui.theme import qcolor
-from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, Toggle
+from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, Toggle, search_field
 
 TITLES = {"mod": "Моды", "resourcepack": "Ресурспаки", "shader": "Шейдеры"}
 WORDS = {"mod": ("мод", "мода", "модов"), "resourcepack": ("ресурспак", "ресурспака", "ресурспаков"),
@@ -63,7 +65,7 @@ class ItemRow(GlassCard):
     remove = Signal(object)
 
     def __init__(self, item, parent=None):
-        super().__init__(parent, radius=14)
+        super().__init__(parent, radius=14, hoverable=True)
         self.item = item
         row = hbox(self, (14, 10, 12, 10), 14)
         self.icon = Icon(item.kind)
@@ -77,37 +79,37 @@ class ItemRow(GlassCard):
         col.addWidget(self.name)
         col.addWidget(self.sub)
         row.addLayout(col, 1)
-        self.update_badge = label("есть обновление", 9.5, 560)
+        self.update_badge = label(t('есть обновление'), 9.5, 560)
         self.update_badge.setStyleSheet(f"color: {qcolor('accent').name()};")
         self.update_badge.hide()
         row.addWidget(self.update_badge)
-        self.badge = label("сборка" if item.from_pack else "моё", 9.5, role="faint")
+        self.badge = label(t('сборка') if item.from_pack else t('моё'), 9.5, role="faint")
         row.addWidget(self.badge)
         self.toggle = Toggle()
         self.toggle.setChecked(item.enabled)
         self.toggle._set_knob(1.0 if item.enabled else 0.0)
         if item.locked:
             self.toggle.setEnabled(False)
-            self.toggle.setToolTip("Нужен на сервере, выключить нельзя")
+            self.toggle.setToolTip(t('Нужен на сервере, выключить нельзя'))
         self.toggle.clicked.connect(lambda on: self.toggled.emit(self.item, on))
         row.addWidget(self.toggle)
-        self.more = GhostButton("Ещё")
+        self.more = GhostButton(t('Ещё'))
         self.more.setEnabled(not item.locked)
         self.more.clicked.connect(self._menu)
         row.addWidget(self.more)
 
     def _menu(self):
         m = QMenu(self)
-        m.addAction("Удалить", lambda: self.remove.emit(self.item))
+        m.addAction(t('Удалить'), lambda: self.remove.emit(self.item))
         m.exec(self.more.mapToGlobal(self.more.rect().bottomLeft()))
 
 
 class ResultCard(GlassCard):
     install = Signal(object)
-    selected = Signal(object)
+    chosen = Signal(object)
 
     def __init__(self, project, kind: str, parent=None):
-        super().__init__(parent, radius=14)
+        super().__init__(parent, radius=14, hoverable=True)
         self.project = project
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         row = hbox(self, (14, 12, 12, 12), 14)
@@ -121,12 +123,12 @@ class ResultCard(GlassCard):
         col.addWidget(self.desc)
         col.addWidget(self.meta)
         row.addLayout(col, 1)
-        self.install_btn = AccentButton("Установить")
+        self.install_btn = AccentButton(t('Установить'))
         self.install_btn.clicked.connect(lambda: self.install.emit(self.project))
         row.addWidget(self.install_btn)
 
     def select(self) -> None:
-        self.selected.emit(self.project)
+        self.chosen.emit(self.project)
 
     def mousePressEvent(self, e):  # noqa: N802
         if e.button() == Qt.MouseButton.LeftButton:
@@ -231,14 +233,14 @@ class DetailPanel(GlassCard):
         col.addWidget(self.title)
         col.addWidget(self.meta)
         head.addLayout(col, 1)
-        close = GhostButton("Закрыть")
+        close = GhostButton(t('Закрыть'))
         close.clicked.connect(self.closed.emit)
         head.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
         lay.addLayout(head)
         brow = hbox(None, (0, 0, 0, 0), 8)
-        self.install_btn = AccentButton("Установить")
+        self.install_btn = AccentButton(t('Установить'))
         self.install_btn.clicked.connect(lambda: self.plan and self.install_plan.emit(self.plan))
-        self.site_btn = GhostButton("Открыть на сайте")
+        self.site_btn = GhostButton(t('Открыть на сайте'))
         self.site_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._page)))
         brow.addWidget(self.install_btn)
         brow.addWidget(self.site_btn)
@@ -272,12 +274,12 @@ class DetailPanel(GlassCard):
         self.project, self.plan = project, None
         self.title.setText(project.title)
         self.meta.setText(human_downloads(project.downloads))
-        self.deps.setText("Проверяю зависимости")
+        self.deps.setText(t('Проверяю зависимости'))
         self.install_btn.setEnabled(False)
         self.body.set_html(f"<p>{project.description}</p>")
-        for t in self.thumbs:
-            t.setParent(None)
-            t.deleteLater()
+        for th in self.thumbs:
+            th.setParent(None)
+            th.deleteLater()
         self.thumbs = []
         self.gallery.hide()
         self.links.setText("")
@@ -300,36 +302,36 @@ class DetailPanel(GlassCard):
         else:
             self.body.set_html(d.body or f"<p>{d.summary}</p>")
         for url, title in d.gallery[:12]:
-            t = Thumb(url, title)
-            t.clicked.connect(self._open_image)
-            self.gallery_row.addWidget(t)
-            self.thumbs.append(t)
-            self._fetch(url, t.set_bytes)
+            th = Thumb(url, title)
+            th.clicked.connect(self._open_image)
+            self.gallery_row.addWidget(th)
+            self.thumbs.append(th)
+            self._fetch(url, th.set_bytes)
         self.gallery_row.addStretch(1)
         self.gallery.setVisible(bool(self.thumbs))
         if d.icon_url:
             self._fetch(d.icon_url, self.icon.set_bytes)
-        self.links.setText("  ".join(f'<a href="{u}" style="color:#6AAEFF">{t}</a>' for t, u in d.links.items()))
+        self.links.setText("  ".join(f'<a href="{u}" style="color:#6AAEFF">{name}</a>' for name, u in d.links.items()))
 
     def _planned(self, seq: int, plan) -> None:
         if seq != self._seq:
             return
         self.plan = plan
         deps = [p.title for p, _ in plan.items[1:]]
-        self.deps.setText("Вместе с ним установятся: " + ", ".join(deps) + "." if deps
-                          else "Дополнительные моды не нужны.")
+        self.deps.setText(t('Вместе с ним установятся: {deps}.', deps=", ".join(deps)) if deps
+                          else t('Дополнительные моды не нужны.'))
         self.install_btn.setEnabled(True)
 
     def _plan_failed(self, seq: int, e) -> None:
         if seq != self._seq:
             return
         if isinstance(e, AlreadyInstalled):
-            self.deps.setText("Уже установлен.")
+            self.deps.setText(t('Уже установлен.'))
         elif isinstance(e, NotDistributable):
-            self.deps.setText("Автор запретил скачивание через сторонние программы. Скачай файл на сайте.")
+            self.deps.setText(t('Автор запретил скачивание через сторонние программы. Скачай файл на сайте.'))
             self._page = e.page_url
         elif isinstance(e, NotAvailable):
-            self.deps.setText("Для этой версии Minecraft нет подходящего файла.")
+            self.deps.setText(t('Для этой версии Minecraft нет подходящего файла.'))
         else:
             self.deps.setText(_error_text(e))
 
@@ -363,10 +365,9 @@ class Browser(QWidget):
         self.ctx, self.kind = ctx, kind
         lay = vbox(self, (0, 0, 0, 0), 10)
         top = hbox(None, (0, 0, 0, 0), 10)
-        back = GhostButton("Назад к списку")
+        back = GhostButton(t('Назад к списку'))
         back.clicked.connect(self.back.emit)
-        self.query = QLineEdit()
-        self.query.setPlaceholderText("Поиск на Modrinth")
+        self.query = search_field(t('Поиск на Modrinth'))
         top.addWidget(back)
         top.addWidget(self.query, 1)
         self.source = "modrinth"
@@ -381,20 +382,20 @@ class Browser(QWidget):
         self.sort = "downloads"
         self.sort_chips = {}
         for key, text in SORT_CHIPS:
-            c = Chip(text, key == self.sort)
+            c = Chip(t(text), key == self.sort)
             c.clicked.connect(lambda key=key: self.set_sort(key))
             filters.addWidget(c)
             self.sort_chips[key] = c
         filters.addStretch(1)
         self.category = QComboBox()
         self.category.setMinimumWidth(200)
-        self.category.addItem("Все категории", "")
+        self.category.addItem(t('Все категории'), "")
         self.category.currentIndexChanged.connect(lambda _i: self.run_search())
         filters.addWidget(self.category)
         lay.addLayout(filters)
         srow = hbox(None, (0, 0, 0, 0), 10)
         self.status = label("", 10, role="muted", wrap=True)
-        self.page_btn = GhostButton("Открыть страницу мода")
+        self.page_btn = GhostButton(t('Открыть страницу мода'))
         self.page_btn.hide()
         self.page_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._page_url)))
         srow.addWidget(self.status, 1)
@@ -404,7 +405,7 @@ class Browser(QWidget):
         body = hbox(None, (0, 0, 0, 0), 14)
         inner = QWidget()
         self.list = vbox(inner, (0, 0, 6, 0), 8)
-        self.more_btn = GhostButton("Показать ещё")
+        self.more_btn = GhostButton(t('Показать ещё'))
         self.more_btn.clicked.connect(self.load_more)
         self.more_btn.hide()
         self.list.addWidget(self.more_btn)
@@ -429,19 +430,25 @@ class Browser(QWidget):
 
     def provider(self):
         if self.source == "curseforge":
-            return CurseForge(self.ctx.http, self.ctx.settings.curseforge_key)
+            return for_context(self.ctx)
         return self.ctx.modrinth
 
     def set_source(self, key: str) -> None:
-        if key == "curseforge" and not self.ctx.settings.curseforge_key:
-            self.status.setText("Чтобы искать на CurseForge, добавь ключ API в настройках, раздел «Лаунчер».")
+        if key == "curseforge" and for_context(self.ctx) is None:
+            self.status.setText(t('Для поиска на CurseForge укажи сервер друзей или свой ключ API в настройках.'))
             return
+        if key == "curseforge" and not self.ctx.settings.curseforge_key:
+            account = self.ctx.accounts.load()
+            if account is None or getattr(account, "offline", False):
+                self.status.setText(t('Войди через Ely.by для поиска на CurseForge.'))
+                return
         self.source = key
         for k, c in self.source_chips.items():
             c.active = k == key
             c.update()
-        self.query.setPlaceholderText("Поиск на CurseForge" if key == "curseforge" else "Поиск на Modrinth")
-        self._load_categories()
+        self.query.setPlaceholderText(t('Поиск на CurseForge') if key == "curseforge" else t('Поиск на Modrinth'))
+        self._set_categories([])
+        self._cats_for = None
         self.run_search()
 
     def set_sort(self, key: str) -> None:
@@ -460,13 +467,15 @@ class Browser(QWidget):
             return
         self._cats_for = self.source
         prov, kind = self.provider(), self.kind
-        jobs.run(lambda progress: prov.categories(PROJECT_TYPES[kind]), on_done=self._set_categories,
+        source = self.source
+        jobs.run(lambda progress: prov.categories(PROJECT_TYPES[kind]),
+                 on_done=lambda cats: self._set_categories(cats) if self.source == source else None,
                  on_error=lambda e: None)
 
     def _set_categories(self, cats) -> None:
         self.category.blockSignals(True)
         self.category.clear()
-        self.category.addItem("Все категории", "")
+        self.category.addItem(t('Все категории'), "")
         for slug, name in cats:
             self.category.addItem(name, slug)
         self.category.blockSignals(False)
@@ -484,7 +493,7 @@ class Browser(QWidget):
         q = self.query.text().strip()
         sort = self.sort if (q or self.sort != "relevance") else "downloads"
         cat = self.category.currentData() or None
-        self.status.setText("Ищу")
+        self.status.setText(t('Ищу'))
         self.show_page_link("")
         loader = lp.loader if self.source == "curseforge" else search_loader(self.kind, lp.loader)
         prov = self.provider()
@@ -509,13 +518,13 @@ class Browser(QWidget):
         for proj in hits:
             card = ResultCard(proj, self.kind)
             card.install.connect(self.install.emit)
-            card.selected.connect(self.open_detail)
+            card.chosen.connect(self.open_detail)
             self.list.insertWidget(self.list.indexOf(self.more_btn), card)
             self.cards.append(card)
             new.append(card)
             if proj.icon_url:
                 self._icon(card, proj.icon_url)
-        self.status.setText("" if self.cards else "Ничего не нашлось. Попробуй другое слово или категорию.")
+        self.status.setText("" if self.cards else t('Ничего не нашлось. Попробуй другое слово или категорию.'))
         self.more_btn.setVisible(len(hits) == PAGE)
         anim.stagger(new)
 
@@ -531,6 +540,8 @@ class Browser(QWidget):
                  on_error=lambda e: None)
 
     def open_detail(self, project) -> None:
+        for c in self.cards:
+            c.set_selected(c.project is project)
         was_hidden = self.detail.isHidden()
         self.detail.show()
         self.detail.show_project(project, self.provider())
@@ -539,6 +550,17 @@ class Browser(QWidget):
 
     def close_detail(self) -> None:
         self.detail.hide()
+
+    def reset(self) -> None:
+        self._seq += 1
+        for c in self.cards:
+            c.setParent(None)
+            c.deleteLater()
+        self.cards = []
+        self.query.clear()
+        self.detail.hide()
+        for c in self.cards:
+            c.set_selected(False)
 
 
 def shiboken_alive(obj) -> bool:
@@ -556,11 +578,12 @@ class ContentPage(QWidget):
         lay = vbox(self, (8, 4, 0, 0), 14)
         head = hbox(None, (0, 0, 0, 0), 12)
         col = vbox(None, (0, 0, 0, 0), 2)
-        col.addWidget(label(TITLES[kind], 22, 650, display=True))
+        self.heading = label(t(TITLES[kind]), 22, 650, display=True)
+        col.addWidget(self.heading)
         self.subtitle = label("", 10.5, role="muted")
         col.addWidget(self.subtitle)
         head.addLayout(col, 1)
-        self.find_btn = AccentButton("Найти новые")
+        self.find_btn = AccentButton(t('Найти новые'))
         self.find_btn.clicked.connect(self.open_browser)
         head.addWidget(self.find_btn)
         lay.addLayout(head)
@@ -570,23 +593,22 @@ class ContentPage(QWidget):
         listing = QWidget()
         ll = vbox(listing, (0, 0, 0, 0), 12)
         controls = hbox(None, (0, 0, 0, 0), 8)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Поиск среди установленных")
+        self.search = search_field(t('Поиск среди установленных'))
         self.search.textChanged.connect(lambda _: self._apply_filter())
         controls.addWidget(self.search, 1)
         self.chips = {}
-        for key, text in (("all", "Все"), ("disabled", "Выключенные"), ("updates", "Есть обновления")):
+        for key, text in (("all", t('Все')), ("disabled", t('Выключенные')), ("updates", t('Есть обновления'))):
             c = Chip(text, key == "all")
             c.clicked.connect(lambda key=key: self.set_filter(key))
             controls.addWidget(c)
             self.chips[key] = c
-        self.check_btn = GhostButton("Проверить обновления")
+        self.check_btn = GhostButton(t('Проверить обновления'))
         self.check_btn.clicked.connect(self.check_updates)
         controls.addWidget(self.check_btn)
         ll.addLayout(controls)
         self.status = label("", 10, role="muted", wrap=True)
         ll.addWidget(self.status)
-        self.update_all = AccentButton("Обновить всё")
+        self.update_all = AccentButton(t('Обновить всё'))
         self.update_all.clicked.connect(self.apply_updates)
         self.update_all.hide()
         ll.addWidget(self.update_all, 0, Qt.AlignmentFlag.AlignLeft)
@@ -621,20 +643,20 @@ class ContentPage(QWidget):
         vanilla = lp is not None and lp.loader == "vanilla" and self.kind == "mod"
         self.find_btn.setVisible(not vanilla and self.stack.currentWidget() is not self.browser)
         if vanilla:
-            self.subtitle.setText("В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge.")
+            self.subtitle.setText(t('В сборке без загрузчика моды не работают. Создай сборку с Fabric, Forge или NeoForge.'))
             self._fill([])
             return
         if lib is None:
-            self.subtitle.setText("Сначала установи сборку на главной.")
+            self.subtitle.setText(t('Сначала установи сборку на главной.'))
             self._fill([])
             return
-        self.subtitle.setText("Читаю файлы")
+        self.subtitle.setText(t('Читаю файлы'))
         jobs.run(lambda progress: lib.scan(self.kind), on_done=lambda items: self._loaded(items, lp.name),
                  on_error=lambda e: self.status.setText(_error_text(e)))
 
     def _loaded(self, items, pack_name: str) -> None:
         n = len(items)
-        self.subtitle.setText(f"{n} {plural(n, *WORDS[self.kind])} в сборке «{pack_name}»")
+        self.subtitle.setText(t('{n} {x2} в сборке «{pack_name}»', n=n, x2=plural(n, *WORDS[self.kind]), pack_name=pack_name))
         self._fill(items)
 
     def _fill(self, items) -> None:
@@ -678,20 +700,31 @@ class ContentPage(QWidget):
         return [r for r in self.rows if not r.isHidden()]
 
     # ---------- actions ----------
+    def _react(self, name: str) -> None:
+        if self.window is not None and hasattr(self.window, "skin_react"):
+            self.window.skin_react(name)
+
+    def _toast(self, text: str, kind: str = "ok") -> None:
+        if self.window is not None and hasattr(self.window, "toast"):
+            self.window.toast(text, kind)
+
     def _toggle(self, item, on: bool) -> None:
+        msg = t('Мод включён: {name}', name=item.name) if on else t('Мод выключен: {name}', name=item.name)
         lib = self.library()
-        jobs.run(lambda progress: lib.set_enabled(item, on), on_done=lambda _: self.reload(),
+        jobs.run(lambda progress: lib.set_enabled(item, on), on_done=lambda _: (self.reload(), self._toast(msg)),
                  on_error=self._failed)
 
     def _remove(self, item) -> None:
-        if not common.confirm(self, "Удаление", f"Удалить {item.name}? Копия останется в снимках.", "Удалить"):
+        if not common.confirm(self, t('Удаление'), t('Удалить {name}? Копия останется в снимках.', name=item.name), t('Удалить')):
             return
         lib = self.library()
-        jobs.run(lambda progress: lib.remove(item), on_done=lambda _: self.reload(), on_error=self._failed)
+        jobs.run(lambda progress: lib.remove(item),
+                 on_done=lambda _: (self.reload(), self._toast(t('Удалено: {name}', name=item.name))),
+                 on_error=self._failed)
 
     def _failed(self, e: BaseException) -> None:
         if isinstance(e, Locked):
-            self.status.setText("Этот мод нужен на сервере, его нельзя выключить или удалить.")
+            self.status.setText(t('Этот мод нужен на сервере, его нельзя выключить или удалить.'))
         else:
             self.status.setText(_error_text(e))
         self.reload()
@@ -709,6 +742,16 @@ class ContentPage(QWidget):
         self.find_btn.show()
         self.reload()
 
+    def reset(self) -> None:
+        """Forget everything about the previous pack: catalog closed, cards and rows cleared."""
+        self.stack.setCurrentWidget(self.listing)
+        self.find_btn.show()
+        self.browser.reset()
+        self._updates = {}
+        self.status.setText("")
+        self.search.clear()
+        self._fill([])
+
     def _plan_for(self, project):
         lib = self.library()
         if lib is None:
@@ -721,18 +764,20 @@ class ContentPage(QWidget):
             return
         names = [p.title for p, _ in plan.items]
         self.browser.detail.install_btn.setEnabled(False)
-        self.browser.detail.deps.setText(f"Устанавливаю {names[0]}")
+        self.browser.detail.deps.setText(t('Устанавливаю {x1}', x1=names[0]))
+        self._react("check")
         jobs.run(lambda progress: lib.install(plan, self.kind, progress),
-                 on_done=lambda items: self.browser.detail.deps.setText(f"Установлено: {', '.join(names)}."),
-                 on_error=lambda e: self.browser.detail.deps.setText(_error_text(e)),
+                 on_done=lambda items: (self.browser.detail.deps.setText(t('Установлено: {x1}.', x1=', '.join(names))),
+                                        self._toast(t('Установлено: {x1}.', x1=', '.join(names))), self._react("nod")),
+                 on_error=lambda e: (self.browser.detail.deps.setText(_error_text(e)), self._react("idle")),
                  on_progress=lambda name, cur, mx: self.browser.detail.deps.setText(
-                     f"Скачиваю {name}" + (f", {round(100 * cur / mx)} %" if mx else "")))
+                     t('Скачиваю {name}', name=name) + (f", {round(100 * cur / mx)} %" if mx else "")))
 
     def install(self, project) -> None:
         lib = self.library()
         if lib is None:
             return
-        self.browser.status.setText(f"Проверяю {project.title}")
+        self.browser.status.setText(t('Проверяю {title}', title=project.title))
         self.browser.show_page_link("")
         source = self.browser.provider()
         jobs.run(lambda progress: lib.plan_install(project.id, self.kind, source=source),
@@ -740,28 +785,29 @@ class ContentPage(QWidget):
 
     def _confirm_install(self, lib: Library, plan) -> None:
         names = [p.title for p, _ in plan.items]
-        text = f"Будет установлено: {names[0]}."
+        text = t('Будет установлено: {x1}.', x1=names[0])
         if len(names) > 1:
-            text += " Зависимости: " + ", ".join(names[1:]) + "."
-        if not common.confirm(self, "Установка", text, "Установить"):
+            text += t(' Зависимости: {deps}.', deps=", ".join(names[1:]))
+        if not common.confirm(self, t('Установка'), text, t('Установить')):
             self.browser.status.setText("")
             return
-        self.browser.status.setText(f"Устанавливаю {names[0]}")
+        self.browser.status.setText(t('Устанавливаю {x1}', x1=names[0]))
+        self._react("check")
         jobs.run(lambda progress: lib.install(plan, self.kind, progress),
-                 on_done=lambda items: self.browser.status.setText(f"Установлено: {', '.join(names)}."),
-                 on_error=self._install_failed,
+                 on_done=lambda items: (self.browser.status.setText(t('Установлено: {x1}.', x1=', '.join(names))),
+                                        self._toast(t('Установлено: {x1}.', x1=', '.join(names))), self._react("nod")),
+                 on_error=lambda e: (self._react("idle"), self._install_failed(e)),
                  on_progress=lambda name, cur, mx: self.browser.status.setText(
-                     f"Скачиваю {name}" + (f", {round(100 * cur / mx)} %" if mx else "")))
+                     t('Скачиваю {name}', name=name) + (f", {round(100 * cur / mx)} %" if mx else "")))
 
     def _install_failed(self, e: BaseException) -> None:
         if isinstance(e, NotDistributable):
-            self.browser.status.setText(f"{e.name}: автор запретил скачивание через сторонние программы. "
-                                        "Скачай файл на странице мода и положи в папку mods.")
+            self.browser.status.setText(t('{name}: автор запретил скачивание через сторонние программы. Скачай файл на странице мода и положи в папку mods.', name=e.name))
             self.browser.show_page_link(e.page_url)
         elif isinstance(e, AlreadyInstalled):
-            self.browser.status.setText(f"{e.name} уже установлен.")
+            self.browser.status.setText(t('{name} уже установлен.', name=e.name))
         elif isinstance(e, NotAvailable):
-            self.browser.status.setText("Для этой версии Minecraft нет подходящего файла.")
+            self.browser.status.setText(t('Для этой версии Minecraft нет подходящего файла.'))
         else:
             self.browser.status.setText(_error_text(e))
 
@@ -769,14 +815,14 @@ class ContentPage(QWidget):
         lib = self.library()
         if lib is None:
             return
-        self.status.setText("Проверяю обновления")
+        self.status.setText(t('Проверяю обновления'))
         jobs.run(lambda progress: lib.check_updates(self.kind), on_done=self._updates_found, on_error=self._failed)
 
     def _updates_found(self, ups) -> None:
         self._updates = {u.item.path: u for u in ups}
         n = len(ups)
-        self.status.setText(f"Обновления есть у {n} {plural(n, 'файла', 'файлов', 'файлов')}." if n
-                            else "Всё свежее. Файлы сборки обновляются вместе со сборкой.")
+        self.status.setText(t('Обновления есть у {n} {x3}.', n=n, x3=plural(n, 'файла', 'файлов', 'файлов')) if n
+                            else t('Всё свежее. Файлы сборки обновляются вместе со сборкой.'))
         self.update_all.setVisible(bool(n))
         for r in self.rows:
             r.update_badge.setVisible(r.item.path in self._updates)
@@ -790,8 +836,9 @@ class ContentPage(QWidget):
                  on_done=lambda _: self._updated(len(ups)), on_error=self._failed)
 
     def _updated(self, n: int) -> None:
+        self._toast(t('Обновлено: {n}.', n=n))
         self._updates = {}
         self.update_all.setEnabled(True)
         self.update_all.hide()
-        self.status.setText(f"Обновлено: {n}.")
+        self.status.setText(t('Обновлено: {n}.', n=n))
         self.reload()

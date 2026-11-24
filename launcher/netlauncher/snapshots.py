@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import json
 import shutil
 from dataclasses import dataclass
@@ -71,7 +73,7 @@ def list_snapshots(root: Path) -> list[Snapshot]:
 
 def restore(root: Path, snap: Snapshot, game_dir: Path) -> Snapshot:
     game_dir = Path(game_dir)
-    safety = create(root, game_dir, "Перед откатом")
+    safety = create(root, game_dir, t('Перед откатом'))
     for part in snap.parts:
         target = game_dir / part
         if target.exists():

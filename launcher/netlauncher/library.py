@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -22,19 +24,19 @@ Progress = Callable[[str, int, int], None]
 
 class Locked(Exception):
     def __init__(self, item: "Item"):
-        super().__init__(f"{item.name}: нужен на сервере, выключить нельзя")
+        super().__init__(t('{name}: нужен на сервере, выключить нельзя', name=item.name))
         self.item = item
 
 
 class AlreadyInstalled(Exception):
     def __init__(self, name: str):
-        super().__init__(f"{name} уже установлен")
+        super().__init__(t('{name} уже установлен', name=name))
         self.name = name
 
 
 class NotAvailable(Exception):
     def __init__(self, name: str):
-        super().__init__(f"{name}: нет версии для этой сборки")
+        super().__init__(t('{name}: нет версии для этой сборки', name=name))
         self.name = name
 
 
@@ -114,7 +116,7 @@ class Library:
             return item
         if item.locked and not on:
             raise Locked(item)
-        self._snapshot(("Включение: " if on else "Выключение: ") + item.name)
+        self._snapshot((t('Включение: ') if on else t('Выключение: ')) + item.name)
         target = item.path.with_name(item.base_name if on else item.base_name + DISABLED)
         os.replace(item.path, target)
         return self._item(item.kind, target)
@@ -122,7 +124,7 @@ class Library:
     def remove(self, item: Item) -> None:
         if item.locked:
             raise Locked(item)
-        self._snapshot("Удаление: " + item.name)
+        self._snapshot(t('Удаление: {name}', name=item.name))
         item.path.unlink(missing_ok=True)
 
     # ---------- install ----------
@@ -170,13 +172,13 @@ class Library:
     def _fetch(self, v: MrVersion, progress: Progress | None, label: str) -> Path:
         f = v.primary_file
         dest = self.cache_dir / "downloads" / f.filename
-        cb = (lambda d, t: progress(label, d, t)) if progress else None
+        cb = (lambda done, total: progress(label, done, total)) if progress else None
         return self.http.download(f.url, dest, sha1=f.sha1 or None, sha512=f.sha512 or None, progress=cb)
 
     def install(self, plan: InstallPlan, kind: Kind, progress: Progress | None = None) -> list[Item]:
         if not plan.items:
             return []
-        self._snapshot("Установка: " + plan.items[0][0].title)
+        self._snapshot(t('Установка: {name}', name=plan.items[0][0].title))
         folder = self.folder(kind)
         folder.mkdir(parents=True, exist_ok=True)
         existing_ids = self._installed_mod_ids() if kind == "mod" else set()
@@ -223,7 +225,7 @@ class Library:
     def apply_updates(self, updates: list[Update], progress: Progress | None = None) -> list[Item]:
         if not updates:
             return []
-        self._snapshot(f"Обновление ({len(updates)})")
+        self._snapshot(t('Обновление ({x1})', x1=len(updates)))
         out = []
         for up in updates:
             tmp = self._fetch(up.version, progress, up.item.name)
