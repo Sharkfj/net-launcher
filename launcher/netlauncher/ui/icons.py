@@ -67,6 +67,18 @@ def _play(p: QPainterPath):
     p.moveTo(6.5, 4.5); p.lineTo(15.5, 10); p.lineTo(6.5, 15.5); p.closeSubpath()  # noqa: E702
 
 
+def _packs(p: QPainterPath):  # four tiles
+    for x, y in ((3, 3), (11.5, 3), (3, 11.5), (11.5, 11.5)):
+        p.addRoundedRect(QRectF(x, y, 5.5, 5.5), 1.3, 1.3)
+
+
+def _official(p: QPainterPath):  # a shield with a tick
+    p.moveTo(10, 2.5); p.lineTo(16.5, 5.4); p.lineTo(16.5, 9.8)  # noqa: E702
+    p.cubicTo(16.5, 13.8, 13.7, 16.4, 10, 17.5); p.cubicTo(6.3, 16.4, 3.5, 13.8, 3.5, 9.8)  # noqa: E702
+    p.lineTo(3.5, 5.4); p.closeSubpath()  # noqa: E702
+    p.moveTo(7, 10); p.lineTo(9.1, 12.1); p.lineTo(13, 8.2)  # noqa: E702
+
+
 def _search(p: QPainterPath):
     p.addEllipse(QPointF(8.8, 8.8), 5, 5)
     p.moveTo(12.6, 12.6); p.lineTo(16.5, 16.5)  # noqa: E702
@@ -74,7 +86,7 @@ def _search(p: QPainterPath):
 
 DRAW = {"home": _home, "mods": _mods, "resourcepacks": _resourcepacks, "shaders": _shaders,
         "snapshots": _snapshots, "settings": _settings, "friends": _friends, "minimize": _minimize, "close": _close,
-        "play": _play, "search": _search}
+        "play": _play, "search": _search, "packs": _packs, "official": _official}
 FILLED = {"play"}
 
 
@@ -98,25 +110,16 @@ def paint(painter: QPainter, name: str, rect: QRectF, color: QColor, width: floa
 
 
 def app_icon(size: int = 256) -> QIcon:
-    """Blue rounded square with a geometric '.N' mark."""
+    """Launcher tile used by the desktop and window manager."""
+    from pathlib import Path
+    png = Path(__file__).parent / "assets" / "icon" / "icon.png"
     icon = QIcon()
-    for s in (16, 32, 48, 64, 128, size):
-        pm = QPixmap(s, s)
-        pm.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#0C1220"))
-        p.drawRoundedRect(QRectF(0, 0, s, s), s * 0.24, s * 0.24)
-        p.setBrush(QColor("#4C9AFF"))
-        u = s / 16.0
-        p.drawEllipse(QRectF(3 * u, 10.2 * u, 2.2 * u, 2.2 * u))
-        n = QPainterPath()
-        n.moveTo(6.8 * u, 12.4 * u); n.lineTo(6.8 * u, 3.6 * u); n.lineTo(9.0 * u, 3.6 * u)  # noqa: E702
-        n.lineTo(11.0 * u, 8.6 * u); n.lineTo(11.0 * u, 3.6 * u); n.lineTo(13.2 * u, 3.6 * u)  # noqa: E702
-        n.lineTo(13.2 * u, 12.4 * u); n.lineTo(11.0 * u, 12.4 * u); n.lineTo(9.0 * u, 7.4 * u)  # noqa: E702
-        n.lineTo(9.0 * u, 12.4 * u); n.closeSubpath()  # noqa: E702
-        p.drawPath(n)
-        p.end()
-        icon.addPixmap(pm)
+    src = QPixmap(str(png))
+    for s in (16, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(src.scaled(s, s, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
     return icon
+
+
+def tray_icon() -> QIcon:
+    from netlauncher.ui.theme import ASSETS
+    return QIcon(str(ASSETS / "icon" / "tray.png"))

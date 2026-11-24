@@ -1,10 +1,10 @@
 {
  "format": 1,
  "launcher": {
-  "version": "0.2.2",
+  "version": "0.3.0",
   "urls": {
-   "windows": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.2.2/NET-Launcher.exe",
-   "linux": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.2.2/NET-Launcher-linux.tar.gz"
+   "windows": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0/NET-Launcher.exe",
+   "linux": "https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0/NET-Launcher-linux.tar.gz"
   }
  },
  "packs": [
@@ -23,6 +23,9 @@
    "cover_url": ""
   }
  ],
+ "support": {
+  "url": "https://boosty.to/shark_fj"
+ },
  "friends": {
   "url": "https://net-friends.net-friends.workers.dev"
  }

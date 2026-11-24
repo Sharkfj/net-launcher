@@ -1,130 +1,219 @@
-"""Frameless glass main window: sidebar, animated page stack, tray."""
+"""Frameless main window: icon rail, animated page stack over a live scene, tray."""
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 from typing import Callable
 
-from PySide6.QtCore import QPoint, QRectF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRegion
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QHBoxLayout, QLabel, QMenu, QStackedWidget,
+from PySide6.QtCore import QPoint, QRectF, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
                                QSystemTrayIcon, QVBoxLayout, QWidget)
 
-from netlauncher.ui import anim, blur, icons
+from netlauncher.ui import anim, icons
+from netlauncher.ui.scene.view import SceneView
 from netlauncher.ui.theme import DISPLAY, font, qcolor
 from netlauncher.ui.widgets import Avatar, _HoverMixin, _mix
 
-PAGES = [("home", "Главная"), ("mods", "Моды"), ("resourcepacks", "Ресурспаки"), ("shaders", "Шейдеры"),
-         ("friends", "Друзья"), ("snapshots", "Снимки"), ("settings", "Настройки")]
+_alive_windows: list = []
+
+RAIL = [("home", "Играть"), ("packs", "Сборки"), ("official", "Официальные"), ("friends", "Друзья"),
+        ("settings", "Настройки")]
+SECTIONS = ("mods", "resourcepacks", "shaders", "snapshots")  # open_page("mods") = this section of the current pack
+SUBPAGES = {"pack": "packs", **{s: "packs" for s in SECTIONS}}
+PAGES = RAIL + [("pack", "Сборка"), ("profile", "Профиль")]
 RADIUS = 18
-SIDEBAR_W = 208
+RAIL_W = 68
 TITLE_H = 52
 EDGE = 6
 
 
 class NavButton(_HoverMixin, QAbstractButton):
+    """Icon-only rail button; its title shows in the rail tip on hover."""
+
+    hovered = Signal(object, bool)
+
     def __init__(self, name: str, title: str, parent=None):
         super().__init__(parent)
-        self.name = name
-        self.setText(title)
+        self.name, self.title = name, title
+        self.setAccessibleName(title)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(40)
-        self.setFont(font(10.5, 520))
+        self.setFixedSize(44, 44)
         self._active = 0.0
+        self.badge = ""
         self.toggled.connect(lambda on: anim.tween(self._active, 1.0 if on else 0.0, 180, self._set_active))
+
+    def set_badge(self, text: str) -> None:
+        self.badge = text
+        self.update()
 
     def _set_active(self, v):
         self._active = float(v)
         self.update()
 
+    def enterEvent(self, e):  # noqa: N802
+        super().enterEvent(e)
+        self.hovered.emit(self, True)
+
+    def leaveEvent(self, e):  # noqa: N802
+        super().leaveEvent(e)
+        self.hovered.emit(self, False)
+
     def paintEvent(self, e):  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self._hover > 0 and self._active < 1:
+        if self._hover > 0:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, round(12 * self._hover * (1 - self._active))))
-            p.drawRoundedRect(QRectF(self.rect()).adjusted(0, 0, 0, 0), 10, 10)
-        color = _mix(_mix(qcolor("muted"), qcolor("text"), self._hover * 0.6), qcolor("text"), self._active)
-        icons.paint(p, self.name, QRectF(14, (self.height() - 18) / 2, 18, 18),
-                    _mix(color, qcolor("accent"), self._active))
-        p.setPen(color)
-        p.setFont(self.font())
-        p.drawText(QRectF(44, 0, self.width() - 48, self.height()), Qt.AlignmentFlag.AlignVCenter, self.text())
+            p.setBrush(QColor(255, 255, 255, round(15 * self._hover)))
+            p.drawRoundedRect(QRectF(self.rect()), 12, 12)
+        color = _mix(_mix(qcolor("muted"), qcolor("text"), self._hover * 0.7), qcolor("text"), self._active)
+        icons.paint(p, "play" if self.name == "home" else self.name, QRectF(12, 12, 20, 20), color, 1.7)
+        if self.badge:
+            p.setFont(font(7.5, 700))
+            w = max(16, p.fontMetrics().horizontalAdvance(self.badge) + 8)
+            pill = QRectF(self.width() - w - 2, 3, w, 16)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(qcolor("accent"))
+            p.drawRoundedRect(pill, 8, 8)
+            p.setPen(qcolor("on_accent"))
+            p.drawText(pill, Qt.AlignmentFlag.AlignCenter, self.badge)
 
 
 class Indicator(QWidget):
-    """The soft highlight that slides to the active section."""
+    """The thin accent bar that flows to the active rail button; stretched, its colours mix towards cyan."""
 
     def paintEvent(self, e):  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(76, 154, 255, 34))
-        p.drawRoundedRect(QRectF(self.rect()), 10, 10)
-        p.setBrush(qcolor("accent"))
-        p.drawRoundedRect(QRectF(0, self.height() * 0.28, 3, self.height() * 0.44), 1.5, 1.5)
+        if self.height() > 24:
+            g = QLinearGradient(0, 0, 0, self.height())
+            g.setColorAt(0, qcolor("accent"))
+            g.setColorAt(.5, QColor(120, 215, 255))
+            g.setColorAt(1, qcolor("accent"))
+            p.setBrush(g)
+        else:
+            p.setBrush(qcolor("accent"))
+        p.drawRoundedRect(QRectF(0, 0, 3, self.height()), 1.5, 1.5)
 
 
-class Sidebar(QWidget):
+class RailTip(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFont(font(9.5, 520))
+        self.setStyleSheet("background: #151f33; color: #e8eefb; border-radius: 8px; padding: 6px 10px;")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+
+class Rail(QWidget):
     def __init__(self, on_select: Callable[[str], None], parent=None):
         super().__init__(parent)
-        self.setFixedWidth(SIDEBAR_W)
+        self.setFixedWidth(RAIL_W)
         self.on_select = on_select
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 20, 14, 16)
-        lay.setSpacing(4)
-        brand = QLabel(".NET")
-        brand.setFont(font(15, 700, DISPLAY))
-        brand.setContentsMargins(12, 0, 0, 0)
-        sub = QLabel("Лаунчер")
-        sub.setProperty("role", "faint")
-        sub.setFont(font(9, 450))
-        sub.setContentsMargins(13, 0, 0, 18)
-        lay.addWidget(brand)
-        lay.addWidget(sub)
+        lay.setContentsMargins(12, 18, 12, 14)
+        lay.setSpacing(6)
+        self.icon_slot = QWidget()
+        self.icon_slot.setFixedSize(40, 40)
+        lay.addWidget(self.icon_slot, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addSpacing(14)
         self.indicator = Indicator(self)
-        self.indicator.lower()
+        self.indicator.setFixedWidth(3)
+        self.indicator.resize(3, 22)
+        self.indicator.hide()
         self.buttons: dict[str, NavButton] = {}
-        for name, title in PAGES:
-            b = NavButton(name, title)
+        for name, title in RAIL:
+            b = NavButton(name, t(title))
             b.clicked.connect(lambda _=False, n=name: self.on_select(n))
-            lay.addWidget(b)
+            lay.addWidget(b, 0, Qt.AlignmentFlag.AlignHCenter)
             self.buttons[name] = b
         lay.addStretch(1)
-        row = QHBoxLayout()
-        row.setContentsMargins(10, 0, 4, 0)
-        row.setSpacing(10)
-        self.avatar = Avatar(30)
-        self.account = QLabel("Не вошёл")
-        self.account.setFont(font(10, 520))
-        row.addWidget(self.avatar)
-        row.addWidget(self.account, 1)
-        lay.addLayout(row)
-        self._active = ""
+        self.avatar = Avatar(34)
+        lay.addWidget(self.avatar, 0, Qt.AlignmentFlag.AlignHCenter)
+        from netlauncher import __version__
+        self.version = QLabel(f"v{__version__}")
+        self.version.setProperty("role", "faint")
+        self.version.setFont(font(7.5, 450))
+        self.version.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        lay.addWidget(self.version)
+        self.account_name = ""
+        self.active = ""
+        self.tip: RailTip | None = None
+
+    def ordered(self) -> list[NavButton]:
+        return [self.buttons[name] for name, _ in RAIL]
 
     def set_active(self, name: str, animate: bool = True) -> None:
-        self._active = name
+        self.active = name
         for n, b in self.buttons.items():
             b.setChecked(n == name)
-        target = self.buttons[name].geometry()
-        if not target.isValid() or target.isEmpty():
+        btn = (self.avatar if name == "profile" else self.buttons[name]).geometry()
+        if not btn.isValid() or btn.isEmpty():
             return
-        if animate and self.indicator.isVisible() and self.indicator.geometry().isValid():
-            anim.tween(self.indicator.geometry(), target, 260, self.indicator.setGeometry)
+        target = QRectF(0, btn.center().y() - 11, 3, 22).toRect()
+        if animate and self.indicator.isVisible() and anim.enabled():
+            self._flow_to(target)
         else:
             self.indicator.setGeometry(target)
         self.indicator.show()
 
+    def _flow_to(self, target) -> None:
+        """Liquid move: the leading edge runs ahead, the tail catches up, so the bar stretches and settles."""
+        from PySide6.QtCore import QEasingCurve, QRect
+        cur = self.indicator.geometry()
+        self._edges = [float(cur.top()), float(cur.bottom() + 1)]
+        down = target.top() > cur.top()
+        lead, tail = (1, 0) if down else (0, 1)
+        ends = [float(target.top()), float(target.bottom() + 1)]
+
+        def setter(i):
+            def f(v):
+                self._edges[i] = float(v)
+                top, bot = min(self._edges), max(self._edges)
+                self.indicator.setGeometry(QRect(0, round(top), 3, max(22, round(bot - top))))
+            return f
+        anim.tween(self._edges[lead], ends[lead], 230, setter(lead), easing=QEasingCurve.Type.OutCubic)
+        anim.tween(self._edges[tail], ends[tail], 460, setter(tail), easing=QEasingCurve.Type.InOutCubic)
+
+    def show_tip(self, button: NavButton) -> None:
+        if self.tip is None:
+            return
+        self.tip.setText(button.title)
+        self.tip.adjustSize()
+        pos = button.mapTo(self.tip.parentWidget(), QPoint(button.width() + 10, (button.height() - self.tip.height()) // 2))
+        self.tip.move(pos.x() - 6, pos.y())
+        self.tip.show()
+        self.tip.raise_()
+        anim.tween(float(pos.x() - 6), float(pos.x()), 200, lambda v: self.tip.move(int(v), pos.y()))
+
+    def hide_tip(self) -> None:
+        if self.tip is not None:
+            self.tip.hide()
+
     def resizeEvent(self, e):  # noqa: N802
         super().resizeEvent(e)
-        if self._active:
-            self.indicator.setGeometry(self.buttons[self._active].geometry())
+        if self.active:
+            self.set_active(self.active, animate=False)
 
     def showEvent(self, e):  # noqa: N802
         super().showEvent(e)
-        if self._active:
+        if self.active:
             self.layout().activate()
-            self.indicator.setGeometry(self.buttons[self._active].geometry())
+            self.set_active(self.active, animate=False)
+
+
+class UpdateChip(QPushButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFont(font(9, 520))
+        self.setStyleSheet("QPushButton { background: rgba(76,154,255,0.12); color: #a9cbff; border: 1px solid rgba(76,154,255,0.32);"
+                           " border-radius: 12px; padding: 4px 12px; } QPushButton:hover { background: rgba(76,154,255,0.2); }")
+        self.url = ""
+        self.hide()
 
 
 class WindowButton(_HoverMixin, QAbstractButton):
@@ -151,9 +240,9 @@ class Placeholder(QWidget):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 8)
-        t = QLabel(title)
-        t.setFont(font(22, 600, DISPLAY))
-        lay.addWidget(t)
+        title_label = QLabel(title)
+        title_label.setFont(font(22, 600, DISPLAY))
+        lay.addWidget(title_label)
         lay.addStretch(1)
 
 
@@ -168,24 +257,38 @@ class MainWindow(QWidget):
         self.setMouseTracking(True)
         self.resize(1180, 720)
         self.setMinimumSize(980, 620)
-        self.blurred = False
         self.game_status = ("launcher", "", "")
-        self.theme = getattr(ctx.settings, "theme", "glass") if ctx is not None else "glass"
         self._animating = 0
         self._opened = False
 
+        self.scene = SceneView(self, radius=RADIUS)
+        self.scene.setGeometry(self.rect())
+        from netlauncher.ui.skinview import SkinRenderer
+        self.skin = SkinRenderer()
+        self.scene.studio.skin = self.skin
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.sidebar = Sidebar(self.open_page)
-        root.addWidget(self.sidebar)
+        self.rail = Rail(self.open_page)
+        root.addWidget(self.rail)
         right = QVBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(0)
         bar = QHBoxLayout()
-        bar.setContentsMargins(0, 10, 12, 0)
-        bar.setSpacing(4)
+        bar.setContentsMargins(0, 14, 14, 0)
+        bar.setSpacing(8)
         bar.addStretch(1)
+        self.offline = False
+        self.offline_badge = QLabel(t('Нет интернета'))
+        self.offline_badge.hide()
+        bar.addWidget(self.offline_badge)
+        self.update_chip = UpdateChip()
+        self.update_chip.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.update_chip.url)))
+        bar.addWidget(self.update_chip)
+        self.faces = QHBoxLayout()
+        self.faces.setSpacing(6)
+        bar.addLayout(self.faces)
+        bar.addSpacing(8)
         self.btn_min = WindowButton("minimize")
         self.btn_close = WindowButton("close", danger=True)
         self.btn_min.clicked.connect(self.showMinimized)
@@ -198,102 +301,200 @@ class MainWindow(QWidget):
         right.addWidget(self.stack, 1)
         holder = QWidget()
         holder.setLayout(right)
-        holder.setContentsMargins(8, 0, 28, 24)
         self.content = holder
+        self.apply_page_inset()
         root.addWidget(holder, 1)
+        self.rail.tip = RailTip(self)
+        self.set_rail_icon()
+        self.rail.avatar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.rail.avatar.setAccessibleName(t("Профиль"))
+        self.rail.avatar.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.rail.avatar.clicked.connect(self.open_profile)
+        for b in self.rail.buttons.values():
+            b.hovered.connect(lambda btn, on: self.rail.show_tip(btn) if on else self.rail.hide_tip())
 
         factory = page_factory or {}
+        self._factory = factory
+        ctx.current_window = self
         self._pages: dict[str, QWidget] = {}
         for name, title in PAGES:
-            w = factory[name](ctx, self) if name in factory else Placeholder(title)
+            w = factory[name](ctx, self) if name in factory else Placeholder(t(title))
             self._pages[name] = w
             self.stack.addWidget(w)
         self._current = "home"
-        self.sidebar.set_active("home", animate=False)
+        self.rail.set_active("home", animate=False)
+        self.scene.set_tab("home")
+        self.scene.lower()
+        from netlauncher.ui.widgets import Toast
+        self.toast_widget = Toast(self)
+        from netlauncher.ui import theme
+        from netlauncher.ui.placement import Placements
+        self.placements = Placements(self)
+        self.placements.apply(theme.current_positions())
         self._setup_tray()
 
     # ---------- pages ----------
     def page(self, name: str) -> QWidget:
+        if name in SECTIONS:
+            pack = self._pages["pack"]
+            return pack.sections[name] if hasattr(pack, "sections") else pack
         return self._pages[name]
 
     def nav_button(self, name: str) -> NavButton:
-        return self.sidebar.buttons[name]
+        return self.rail.buttons[name]
 
     def current_page(self) -> str:
         return self._current
 
+    def apply_page_inset(self):
+        from netlauncher.ui.theme import page_inset
+        self.content.setContentsMargins(page_inset(), 0, 0, 24)
+
     def is_animating(self) -> bool:
         return self._animating > 0
 
+    def open_pack(self, pack_id: str, section: str | None = None) -> None:
+        home = self._pages.get("home")
+        if pack_id != self.ctx.settings.selected_pack:
+            if hasattr(home, "pick_pack"):
+                home.pick_pack(pack_id)
+            else:
+                self.ctx.settings.selected_pack = pack_id
+                self.ctx.save()
+        pack = self._pages["pack"]
+        if hasattr(pack, "show_pack"):
+            pack.show_pack(pack_id, section)
+        self._show("pack", "pack", shown=False)
+
     def open_page(self, name: str) -> None:
-        self.sidebar.set_active(name)
-        if name == self._current and self.stack.currentWidget() is self._pages[name]:
+        if name in SECTIONS:
+            pack = self._pages["pack"]
+            if hasattr(pack, "show_pack"):
+                from netlauncher.ui.pages.common import current_pack
+                lp = current_pack(self.ctx)
+                pack.show_pack(lp.id if lp else None, name)
+            self._show(name, "pack", shown=False)
+            return
+        self._show(name, name)
+
+    def _show(self, name: str, key: str, shown: bool = True) -> None:
+        tab = SUBPAGES.get(name, name)
+        self.rail.set_active(tab)
+        self.scene.set_tab(tab)
+        self.scene.set_shade("home" if name == "home" else "deep")
+        if name == self._current and self.stack.currentWidget() is self._pages[key]:
             return
         self._current = name
-        w = self._pages[name]
+        w = self._pages[key]
         self.stack.setCurrentWidget(w)
-        if hasattr(w, "on_shown"):
+        if shown and hasattr(w, "on_shown"):
             w.on_shown()
         if anim.enabled():
             self._animating += 1
-            anim.fade_slide_in(w, dx=24, ms=220, on_done=self._anim_done)
+            anim.fade_slide_in(w, dx=0, dy=10, ms=320, on_done=self._anim_done)
 
     def _anim_done(self):
         self._animating = max(0, self._animating - 1)
 
-    # ---------- painting / blur ----------
+    def set_rail_icon(self) -> None:
+        from PySide6.QtGui import QPixmap
+        from netlauncher.ui.splash import ICON_DIR
+        lab = QLabel(self.rail.icon_slot)
+        lab.setObjectName("rail_icon")
+        lab.setScaledContents(True)
+        lab.setGeometry(0, 0, self.rail.icon_slot.width(), self.rail.icon_slot.height())
+        lab.setPixmap(QPixmap(str(ICON_DIR / "icon.png")))
+        lab.show()
+
+    def open_profile(self, name=None) -> None:
+        page = self.page("profile")
+        page.target = name
+        if self.current_page() == "profile" and hasattr(page, "on_shown"):
+            page.on_shown()
+        else:
+            self.open_page("profile")
+
+    # ---------- scene ----------
+    def skin_react(self, name: str) -> None:
+        if self.scene.kind == "studio" or name in ("idle",):
+            self.skin.react(name)
+
+    def set_game_running(self, on: bool) -> None:
+        self.scene.set_paused("game", on)
+
+    # ---------- friends online, top right ----------
+    def set_online_faces(self, people: list) -> None:
+        """people: [(name, QImage | None)], at most three are shown."""
+        while self.faces.count():
+            item = self.faces.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for name, img in people[:3]:
+            a = Avatar(28)
+            a.set_name(name)
+            if img is not None:
+                a.set_face(img)
+            a.setToolTip(name)
+            self.faces.addWidget(a)
+
+    # ---------- update chip ----------
+    def set_offline(self, on: bool) -> None:
+        self.offline = on
+        self.offline_badge.setVisible(on)
+
+    def show_update(self, version: str, url: str) -> None:
+        self.update_chip.setText(t('Вышла {v}', v=version))
+        self.update_chip.url = url
+        self.update_chip.show()
+
+    def offer_update(self, cat) -> None:
+        """Show the corner chip when the catalog names a newer launcher than this one."""
+        import sys
+        from netlauncher import __version__
+        if cat is None or not getattr(cat, "launcher_version", ""):
+            return
+
+        def key(v: str):
+            return tuple(int(x) if x.isdigit() else 0 for x in v.split("."))
+        if key(cat.launcher_version) <= key(__version__):
+            return
+        url = cat.launcher_urls.get("windows" if sys.platform.startswith("win") else "linux", "")
+        if url:
+            self.show_update(cat.launcher_version, url)
+
+    # ---------- painting ----------
     def _shape(self) -> QPainterPath:
         p = QPainterPath()
         p.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
         return p
 
-    def _apply_blur(self):
-        region = QRegion(self._shape().toFillPolygon().toPolygon())
-        self.blurred = blur.enable(self, region, on=self.theme != "solid")
-        self.update()
-
-    def set_theme(self, theme: str) -> None:
-        self.theme = "solid" if theme == "solid" else "glass"
-        if self.isVisible():
-            self._apply_blur()
-        else:
-            self.blurred = False
-
     def paintEvent(self, e):  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         shape = self._shape()
-        if self.blurred:
-            p.fillPath(shape, qcolor("window"))
-        else:
-            g = QLinearGradient(0, 0, 0, self.height())
-            g.setColorAt(0, QColor("#0F1A2E"))
-            g.setColorAt(1, QColor("#0A101D"))
-            p.fillPath(shape, g)
-        sheen = QLinearGradient(0, 0, 0, 220)
-        sheen.setColorAt(0, QColor(255, 255, 255, 12))
-        sheen.setColorAt(1, QColor(255, 255, 255, 0))
-        p.fillPath(shape, sheen)
-        side = QPainterPath()
-        side.addRect(QRectF(SIDEBAR_W, 0, 1, self.height()))
-        p.fillPath(side.intersected(shape), QColor(255, 255, 255, 14))
-        p.setPen(QPen(QColor(255, 255, 255, 26), 1))
-        p.drawPath(shape)
+        g = QLinearGradient(0, 0, 0, self.height())
+        g.setColorAt(0, QColor("#0F1A2E"))
+        g.setColorAt(1, QColor("#0A101D"))
+        p.fillPath(shape, g)
 
     def showEvent(self, e):  # noqa: N802
         super().showEvent(e)
-        self._apply_blur()
         if not self._opened:
             self._opened = True
             if anim.enabled():
                 self._animating += 1
                 anim.fade_slide_in(self.content, dx=0, dy=14, ms=420, on_done=self._anim_done)
-                anim.fade_slide_in(self.sidebar, dx=-10, ms=420)
+                anim.fade_slide_in(self.rail, dx=-10, ms=420)
 
     def resizeEvent(self, e):  # noqa: N802
         super().resizeEvent(e)
-        if self.isVisible():
-            self._apply_blur()
+        self.scene.setGeometry(self.rect())
+
+    def changeEvent(self, e):  # noqa: N802
+        super().changeEvent(e)
+        from PySide6.QtCore import QEvent
+        if e.type() == QEvent.Type.WindowStateChange:
+            self.scene.set_paused("hidden", bool(self.windowState() & Qt.WindowState.WindowMinimized))
 
     # ---------- moving / resizing a frameless window ----------
     def _edges(self, pos: QPoint) -> Qt.Edge:
@@ -314,7 +515,7 @@ class MainWindow(QWidget):
             if edges != Qt.Edge(0):
                 self.windowHandle().startSystemResize(edges)
                 return
-            if e.position().y() <= TITLE_H or e.position().x() <= SIDEBAR_W:
+            if e.position().y() <= TITLE_H or e.position().x() <= RAIL_W:
                 self.windowHandle().startSystemMove()
                 return
         super().mousePressEvent(e)
@@ -333,26 +534,49 @@ class MainWindow(QWidget):
             self.unsetCursor()
         super().mouseMoveEvent(e)
 
+    def toast(self, text: str, kind: str = "ok") -> None:
+        self.toast_widget.show_message(text, kind)
+
+    # ---------- language ----------
+    def rebuild(self) -> "MainWindow":
+        """Recreate the window (after a language change) in the same place, on the same page."""
+        page, geo = self._current, self.geometry()
+        new = MainWindow(self.ctx, page_factory=self._factory)
+        new._opened = True
+        new.setGeometry(geo)
+        new.show()
+        new.open_page(page)
+        self.hide()
+        self.deleteLater()
+        _alive_windows.append(new)
+        return new
+
     # ---------- account ----------
     def set_account(self, acc) -> None:
-        self.sidebar.account.setText(acc.name if acc else "Не вошёл")
-        self.sidebar.avatar.set_name(acc.name if acc else "?")
+        self.rail.account_name = acc.name if acc else ""
+        from netlauncher.ui.supporter import active, saved_style
+        self.rail.avatar.set_supporter(bool(acc and active(self.ctx)), saved_style(self.ctx)["frame"])
+        self.rail.avatar.set_name(acc.name if acc else "?")
+        self.rail.avatar.setToolTip(t("Профиль"))
         if acc is None:
-            self.sidebar.avatar.set_face(None)
+            self.rail.avatar.set_face(None)
 
     def set_face(self, img) -> None:
-        self.sidebar.avatar.set_face(img)
+        self.rail.avatar.set_face(img)
+        page = self._pages.get("profile")
+        if page and hasattr(page, "show_own_face"):
+            page.show_own_face(img)
 
     # ---------- tray ----------
     def _setup_tray(self):
         self.tray = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-        self.tray = QSystemTrayIcon(icons.app_icon(), self)
+        self.tray = QSystemTrayIcon(icons.tray_icon(), self)
         self.tray.setToolTip(".NET Launcher")
         menu = QMenu()
-        menu.addAction("Показать", self.restore_from_tray)
-        menu.addAction("Выход", QApplication.quit)
+        menu.addAction(t('Показать'), self.restore_from_tray)
+        menu.addAction(t('Выход'), QApplication.quit)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(lambda reason: self.restore_from_tray()
                                     if reason == QSystemTrayIcon.ActivationReason.Trigger else None)

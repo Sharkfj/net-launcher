@@ -6,7 +6,7 @@ import ctypes
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from netlauncher.catalog import PackEntry
@@ -26,6 +26,12 @@ class LocalPack:
     loader_version: str
     description: str = ""
     server: str = ""
+    official: bool = False
+    fps: bool = False
+    fps_mods: list[str] = field(default_factory=list)
+    fps_options: dict = field(default_factory=dict)
+    backdrop: str = "studio"
+    pose: str = "idle"
 
 
 _FIELDS = {f.name for f in fields(LocalPack)}
@@ -45,7 +51,11 @@ def get(lay: Layout, pack_id: str) -> LocalPack | None:
     gd = game_dir(lay, pack_id)
     try:
         raw = json.loads((gd / PACK_FILE).read_text(encoding="utf-8"))
-        lp = LocalPack(**{k: str(v) for k, v in raw.items() if k in _FIELDS})
+        data = {k: str(v) for k, v in raw.items() if k in _FIELDS}
+        for key, kind in (("official", bool), ("fps", bool), ("fps_mods", list), ("fps_options", dict)):
+            if key in raw:
+                data[key] = raw[key] if isinstance(raw[key], kind) else kind()
+        lp = LocalPack(**data)
     except (OSError, ValueError, TypeError):
         return None
     state = load_state(gd)
@@ -61,7 +71,8 @@ def list_installed(lay: Layout) -> list[LocalPack]:
 
 
 def from_entry(e: PackEntry) -> LocalPack:
-    return LocalPack(e.id, e.name, e.version, e.mc_version, e.loader, e.loader_version, e.description, e.server)
+    return LocalPack(e.id, e.name, e.version, e.mc_version, e.loader, e.loader_version, e.description, e.server,
+                     official=True)
 
 
 def mod_count(lay: Layout, pack_id: str) -> int:
@@ -92,3 +103,25 @@ def total_ram_mb() -> int:
         ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
         return int(st.ullTotalPhys // (1024 * 1024))
     return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024 * 1024))
+
+
+def delete(lay: Layout, pack_id: str, keep_worlds: bool = True) -> Path | None:
+    """Remove an installed pack. With keep_worlds its saves move to backups/<pack>/saves-<time>/ first."""
+    import shutil
+    from datetime import datetime
+    gd = game_dir(lay, pack_id)
+    kept = None
+    saves = gd / "saves"
+    if keep_worlds and saves.is_dir() and any(saves.iterdir()):
+        kept = lay.backups / pack_id / f"saves-{datetime.now():%Y-%m-%d_%H-%M-%S}"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(saves), str(kept))
+    shutil.rmtree(gd, ignore_errors=True)
+    return kept
+
+
+def locked(lp: LocalPack, settings, catalog) -> bool:
+    """Players cannot change official packs; the author (author mode with a GitHub token) can."""
+    official = lp.official or (catalog is not None and catalog.get(lp.id) is not None)
+    author = bool(getattr(settings, "author_mode", False) and getattr(settings, "github_token", ""))
+    return official and not author

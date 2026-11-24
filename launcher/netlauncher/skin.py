@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,8 @@ def check_skin(data: bytes) -> tuple[int, int]:
 
 
 def fetch(http: Http, name: str, cache_dir: Path, force: bool = False) -> Skin | None:
+    if not re.fullmatch(r"[A-Za-z0-9_]{2,16}", name):
+        return None
     d = Path(cache_dir) / "skins"
     png, meta = d / f"{name}.png", d / f"{name}.json"
 

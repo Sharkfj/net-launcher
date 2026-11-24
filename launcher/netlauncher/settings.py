@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 
@@ -15,6 +15,8 @@ class Settings:
     width: int = 1600
     height: int = 900
     animations: bool = True
+    discord_presence: bool = True
+    discord_app_id: str = ""
     author_mode: bool = False
     github_repo: str = ""
     github_token: str = ""
@@ -22,9 +24,14 @@ class Settings:
     source_instance: str = ""
     selected_pack: str = "net"
     curseforge_key: str = ""
-    theme: str = "glass"  # "glass" (transparent, blurred) or "solid"
     first_run_done: bool = False
     friends_url: str = ""
+    language: str = "en"
+    backgrounds: bool = True
+    supporter_accounts: dict = field(default_factory=dict)
+    profile_cosmetics: dict = field(default_factory=dict)
+    author_cosmetic_receipt: str = ""
+    shortcut_asked: bool = False
 
 
 def load_settings(path: Path) -> Settings:

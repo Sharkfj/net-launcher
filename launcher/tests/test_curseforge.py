@@ -92,3 +92,29 @@ def test_build_uses_curseforge_url_and_exact_page(tmp_path):
     [m] = res.index.manual
     assert m.page_url == "https://www.curseforge.com/minecraft/mc-mods/m20/files/200"
     assert sorted(cf_http.calls[0].body["fingerprints"]) == sorted([fp_ok, fp_closed])
+
+
+def test_curseforge_via_proxy_sends_no_key(home):
+    from netlauncher.auth_ely import Account
+    from netlauncher.catalog import parse
+    from netlauncher.curseforge import for_context
+    from netlauncher.friends import ELY_JOIN
+    from netlauncher.ui.app import make_context
+
+    base = "https://friends.example"
+    http = FakeHttp({base + "/cf/mods/search": {"data": [mod()]}, base + "/cf/mods/123": {"data": mod()},
+                     base + "/cf/mods/123/files/2": {"data": cffile(2)}, ELY_JOIN: None,
+                     base + "/v1/auth/challenge": {"server_id": "sid"},
+                     base + "/v1/auth/verify": {"token": "session", "name": "Player"}})
+    ctx = make_context(home, http)
+    ctx.accounts.save(Account("Player", "abc", "tok", "ct"))
+    ctx.catalog = parse({"friends": {"url": base}})
+    assert ctx.catalog.curseforge_proxy == base + "/cf"
+    cf = for_context(ctx)
+    assert cf.search("chrom", "mod", "1.21.1", "neoforge")[0].id == "cf:123"
+    assert cf.projects(["cf:123"])["cf:123"].slug == "create-chromeware"
+    assert cf.file(123, 2)["id"] == 2
+    calls = [c for c in http.calls if "/cf/" in c.url]
+    assert len(calls) == 3
+    assert all(c.method == "GET" and c.headers == {"Authorization": "Bearer session"} for c in calls)
+    assert calls[0].params["gameVersion"] == "1.21.1"

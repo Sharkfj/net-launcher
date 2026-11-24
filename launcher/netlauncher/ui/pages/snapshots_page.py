@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QScrollArea, QWidget
 
@@ -22,11 +24,11 @@ class SnapRow(GlassCard):
         self.snap = snap
         row = hbox(self, (18, 12, 12, 12), 12)
         col = vbox(None, (0, 0, 0, 0), 2)
-        col.addWidget(label(snap.reason or "Снимок", 11, 560))
+        col.addWidget(label(snap.reason or t('Снимок'), 11, 560))
         col.addWidget(label(f"{human_date(snap.created)}, {human_size(snap.size_bytes)}", 9.5, role="faint"))
         row.addLayout(col, 1)
-        self.restore_btn = AccentButton("Откатить")
-        self.delete_btn = GhostButton("Удалить")
+        self.restore_btn = AccentButton(t('Откатить'))
+        self.delete_btn = GhostButton(t('Удалить'))
         self.restore_btn.clicked.connect(lambda: self.restore.emit(self.snap))
         self.delete_btn.clicked.connect(lambda: self.delete.emit(self.snap))
         row.addWidget(self.restore_btn)
@@ -39,9 +41,9 @@ class SnapshotsPage(QWidget):
         self.ctx, self.window = ctx, window
         self.rows: list[SnapRow] = []
         lay = vbox(self, (8, 4, 0, 0), 12)
-        lay.addWidget(label("Снимки", 22, 650, display=True))
-        lay.addWidget(label("Перед каждой установкой, удалением и обновлением лаунчер копирует моды и настройки. "
-                            "Отсюда их можно вернуть.", 10.5, role="muted", wrap=True))
+        self.heading = label(t('Снимки'), 22, 650, display=True)
+        lay.addWidget(self.heading)
+        lay.addWidget(label(t('Перед каждой установкой, удалением и обновлением лаунчер копирует моды и настройки. Отсюда их можно вернуть.'), 10.5, role="muted", wrap=True))
         self.status = label("", 10, role="muted")
         lay.addWidget(self.status)
         inner = QWidget()
@@ -67,7 +69,7 @@ class SnapshotsPage(QWidget):
             r.deleteLater()
         self.rows = []
         snaps = snapshots.list_snapshots(root) if root else []
-        self.status.setText("" if snaps else "Снимков пока нет. Они появятся после первого изменения модов.")
+        self.status.setText("" if snaps else t('Снимков пока нет. Они появятся после первого изменения модов.'))
         for s in snaps:
             r = SnapRow(s)
             r.restore.connect(self._restore)
@@ -77,18 +79,18 @@ class SnapshotsPage(QWidget):
         anim.stagger(self.rows)
 
     def _restore(self, snap) -> None:
-        text = (f"Вернуть моды и настройки к состоянию на {human_date(snap.created)}? "
-                "Текущее состояние сохранится отдельным снимком.")
-        if not common.confirm(self, "Откат", text, "Откатить"):
+        text = (t('Вернуть моды и настройки к состоянию на {x1}? Текущее состояние сохранится отдельным снимком.', x1=human_date(snap.created)))
+        if not common.confirm(self, t('Откат'), text, t('Откатить')):
             return
         root, gd = self._root()
-        self.status.setText("Возвращаю файлы")
+        self.status.setText(t('Возвращаю файлы'))
         jobs.run(lambda progress: snapshots.restore(root, snap, gd),
-                 on_done=lambda _: (self.status.setText("Готово. Файлы возвращены."), self.reload()),
+                 on_done=lambda _: (self.status.setText(""), self.reload(),
+                                    self.window.toast(t('Готово. Файлы возвращены.')) if self.window else None),
                  on_error=lambda e: self.status.setText(_error_text(e)))
 
     def _delete(self, snap) -> None:
-        if not common.confirm(self, "Удаление", "Удалить этот снимок? Вернуть его будет нельзя.", "Удалить"):
+        if not common.confirm(self, t('Удаление'), t('Удалить этот снимок? Вернуть его будет нельзя.'), t('Удалить')):
             return
         snapshots.delete(snap)
         self.reload()

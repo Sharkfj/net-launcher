@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import json
 from dataclasses import dataclass, field
 
@@ -114,8 +116,8 @@ class Modrinth:
 
     def categories(self, project_type: str) -> list[tuple[str, str]]:
         tags = self.http.get_json(f"{API}/tag/category") or []
-        names = sorted({t["name"] for t in tags if t.get("project_type") == project_type
-                        and t.get("header") == "categories"})
+        names = sorted({tag["name"] for tag in tags if tag.get("project_type") == project_type
+                        and tag.get("header") == "categories"})
         return [(n, n.replace("-", " ").title()) for n in names]
 
     def details(self, id_or_slug: str) -> ProjectDetails:
@@ -126,8 +128,8 @@ class Modrinth:
             members = []
         owner = next((m for m in members if str(m.get("role", "")).lower() == "owner"), members[0] if members else None)
         links = {}
-        for key, title in (("source_url", "Исходники"), ("wiki_url", "Вики"), ("discord_url", "Discord"),
-                           ("issues_url", "Ошибки")):
+        for key, title in (("source_url", t('Исходники')), ("wiki_url", t('Вики')), ("discord_url", "Discord"),
+                           ("issues_url", t('Ошибки'))):
             if d.get(key):
                 links[title] = d[key]
         gallery = [(g["url"], g.get("title") or "") for g in sorted(d.get("gallery") or [],

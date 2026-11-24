@@ -122,6 +122,21 @@ def test_install_flow_shows_plan(env):
     assert (gd / "mods" / "ss.jar").exists()
 
 
+def test_install_reaction(env, monkeypatch):
+    w, ctx, gd, confirms = env
+    seen = []
+    monkeypatch.setattr(w, "skin_react", lambda name: seen.append(name), raising=False)
+    w.open_page("mods")
+    page = w.page("mods")
+    page.open_browser()
+    page.browser.query.setText("shoulder")
+    page.browser.run_search()
+    pump(until=lambda: len(page.browser.cards) == 1)
+    page.browser.cards[0].install_btn.click()
+    pump(until=lambda: "nod" in seen)
+    assert seen == ["check", "nod"]
+
+
 def test_snapshot_restore_confirm(env):
     w, ctx, gd, confirms = env
     root = ctx.lay.snapshots / "net"
@@ -156,33 +171,78 @@ def test_author_section_hidden_when_off(env):
     assert not page.author_box.isVisibleTo(page)
     page.author_toggle.click()
     assert page.author_box.isVisibleTo(page)
-    assert [page.author_pack.itemText(i) for i in range(page.author_pack.count())] == [".NET"]
+    assert page.repo.isVisibleTo(page) and page.token.isVisibleTo(page)
+    assert not hasattr(page, "author_pack")
+
+
+def test_author_tools_on_official_tab(env):
+    w, ctx, gd, _ = env
+    w.open_page("official")
+    page = w.page("official")
+    assert not page.author_box.isVisibleTo(page)
+    ctx.settings.author_mode, ctx.settings.github_token = True, "t"
+    ctx.settings.github_repo = "owner/packs"
+    ctx.http.routes["https://api.github.com/repos/owner/packs"] = {"permissions": {"push": True}}
+    w.open_page("home")
+    w.open_page("official")
+    pump(until=lambda: page.author_box.isVisibleTo(page))
+    assert page.author_box.isVisibleTo(page)
+    tools = page.author_box
+    assert [tools.author_pack.itemText(i) for i in range(tools.author_pack.count())] == [".NET"]
+    assert tools.build_btn.text() == "Собрать" and tools.publish_btn.text() == "Опубликовать"
+
+
+def test_publish_button_says_update_for_catalog_pack(env):
+    from netlauncher.catalog import Catalog, PackEntry
+    w, ctx, gd, _ = env
+    ctx.settings.author_mode, ctx.settings.github_token = True, "t"
+    ctx.settings.github_repo = "owner/packs"
+    ctx.http.routes["https://api.github.com/repos/owner/packs"] = {"permissions": {"push": True}}
+    ctx.catalog = Catalog("0.1.0", {}, [PackEntry("net", ".NET", "", "0.1", "1.21.1", "neoforge", "21.1.267", "u", "")])
+    w.open_page("official")
+    pump(until=lambda: w.page("official").author_box.isVisible())
+    assert w.page("official").author_box.publish_btn.text() == "Обновить сборку"
+
+
+def test_official_cards_states(env):
+    from netlauncher.catalog import Catalog, PackEntry
+    w, ctx, gd, _ = env
+    localpacks.save(ctx.lay, LocalPack("same", "Same", "1.0", "1.21.1", "fabric", "0.16.9", official=True))
+    ctx.catalog = Catalog("0.1.0", {}, [
+        PackEntry("net", ".NET", "Киберпанк", "0.2", "1.21.1", "neoforge", "21.1.267", "u", ""),
+        PackEntry("same", "Same", "", "1.0", "1.21.1", "fabric", "0.16.9", "u", ""),
+        PackEntry("new", "New", "", "0.1", "1.21.1", "fabric", "0.16.9", "u", "")])
+    w.open_page("official")
+    page = w.page("official")
+    assert [(c.entry.id, c.action_btn.text()) for c in page.cards] == [
+        ("net", "Обновить"), ("same", "Играть"), ("new", "Установить")]
+    assert page.cards[0].desc.text() == "Киберпанк"
 
 
 def test_about_credits(env):
     w, ctx, gd, _ = env
     page = w.page("settings")
-    assert CREDITS == ["@looper_fj", "Claude Code"]
-    assert page.credits.text() == "Разработчики: @looper_fj и Claude Code"
+    assert CREDITS == ["@looper_fj"]
+    assert page.credits.text() == "Разработчик: @looper_fj"
 
 
 def test_settings_fields_wide_and_ram_hint_matches(env, monkeypatch):
     w, ctx, gd, _ = env
     page = w.page("settings")
-    for f in (page.repo, page.token, page.pack_desc, page.pack_server):
+    for f in (page.repo, page.token):
         assert f.minimumWidth() >= 320
     from netlauncher.ui.pages.settings_page import gb_text
     assert gb_text(7680) == "7,5 ГБ" and gb_text(8192) == "8 ГБ"
 
 
-def test_browser_source_switch_requires_key(env, monkeypatch):
+def test_browser_source_switch_with_personal_key(env, monkeypatch):
     w, ctx, gd, _ = env
     w.open_page("mods")
     page = w.page("mods")
     page.open_browser()
     page.browser.set_source("curseforge")
     assert page.browser.source == "modrinth"
-    assert page.browser.status.text() == "Чтобы искать на CurseForge, добавь ключ API в настройках, раздел «Лаунчер»."
+    assert page.browser.status.text() == "Для поиска на CurseForge укажи сервер друзей или свой ключ API в настройках."
     ctx.settings.curseforge_key = "KEY"
     from netlauncher.curseforge import API as CF
     ctx.http.routes[f"{CF}/mods/search"] = {"data": [{"id": 7, "name": "Chromeware", "slug": "c", "summary": "s",
@@ -193,14 +253,12 @@ def test_browser_source_switch_requires_key(env, monkeypatch):
     assert page.browser.cards[0].title.text() == "Chromeware" and page.browser.cards[0].meta.text() == "2 тыс. загрузок"
 
 
-def test_settings_theme_switch(env):
+def test_settings_has_no_theme_row(env):
+    from PySide6.QtWidgets import QLabel
     w, ctx, gd, _ = env
     page = w.page("settings")
-    assert w.theme == "glass" and page.theme_chips["glass"].active
-    page.set_theme("solid")
-    assert w.theme == "solid" and ctx.settings.theme == "solid" and page.theme_chips["solid"].active
-    page.set_theme("glass")
-    assert w.theme == "glass"
+    assert not hasattr(page, "theme_chips") and not hasattr(page, "set_theme")
+    assert "Тема" not in [lb.text() for lb in page.findChildren(QLabel)]
 
 
 def _hit(i):
@@ -256,7 +314,7 @@ def test_detail_panel_info_and_deps(env):
     pump(until=lambda: len(b.cards) == 1)
     b.cards[0].select()
     panel = b.detail
-    pump(until=lambda: panel.deps.text().startswith("Вместе с ним"))
+    pump(until=lambda: panel.deps.text().startswith("Вместе с ним") and panel.meta.text().startswith("Exopandora"))
     assert panel.isVisibleTo(b) and panel.title.text() == "Shoulder Surfing"
     assert panel.meta.text().startswith("Exopandora")
     assert "Камера сдвигается вбок." in panel.body.toPlainText()
@@ -355,9 +413,10 @@ def test_add_friend_and_presence(env):
     assert next(c for c in ctx.http.calls if c.url.endswith("/friends/request")).body == {"name": "Vasya"}
     w.game_status = ("playing", ".NET", "play.example.net")
     page.tick()
-    pump(until=lambda: any(c.url.endswith("/v1/presence") for c in ctx.http.calls))
-    pres = [c for c in ctx.http.calls if c.url.endswith("/v1/presence")][-1]
-    assert pres.body == {"status": "playing", "pack": ".NET", "server": "play.example.net"}
+    playing = lambda: [c for c in ctx.http.calls
+                       if c.url.endswith("/v1/presence") and (c.body or {}).get("status") == "playing"]
+    pump(until=lambda: playing())
+    assert playing()[-1].body == {"status": "playing", "pack": ".NET", "server": "play.example.net"}
 
 
 def test_friend_status_text():
@@ -377,3 +436,50 @@ def test_richtext_protocol_relative_image(qapp, home):
     rt.set_html('<p>x <img src="//media.forgecdn.net/a.png"></p>')
     pump(until=lambda: rt.loaded("https://media.forgecdn.net/a.png"))
     assert rt.loaded("https://media.forgecdn.net/a.png")
+
+
+def test_backgrounds_toggle_plain_scene(env):
+    from netlauncher.settings import load_settings
+    w, ctx, gd, _ = env
+    before = w.scene.kind
+    page = w.page("settings")
+    page.backgrounds.click()
+    assert w.scene.kind == "plain" and ctx.settings.backgrounds is False
+    assert load_settings(ctx.lay.settings_file).backgrounds is False
+    page.backgrounds.click()
+    assert w.scene.kind == before and before != "plain"
+
+
+def test_settings_shortcut_button(env, monkeypatch):
+    from pathlib import Path
+    w, ctx, gd, _ = env
+    made = []
+    monkeypatch.setattr("netlauncher.shortcut.create", lambda cmd, icon, name=".NET Launcher": made.append(cmd) or Path("/x"))
+    page = w.page("settings")
+    page.shortcut_btn.click()
+    assert len(made) == 1
+    assert w.toast_widget.text.text() == "Ярлык на рабочем столе создан"
+
+
+def test_author_tools_require_repository_write_access(env):
+    w, ctx, _, _ = env
+    ctx.settings.author_mode = True
+    ctx.settings.github_repo, ctx.settings.github_token = "owner/packs", "read-only"
+    ctx.http.routes["https://api.github.com/repos/owner/packs"] = {"permissions": {"push": False}}
+    w.open_page("official")
+    pump(until=lambda: any(call.url.endswith("/repos/owner/packs") for call in ctx.http.calls))
+    assert not w.page("official").author_box.isVisible()
+
+
+def test_curseforge_tab_enabled_with_proxy(env):
+    w, ctx, _, _ = env
+    ctx.settings.friends_url = FBASE
+    _friends_routes(ctx.http, STATE)
+    ctx.http.routes[FBASE + "/cf/mods/search"] = {"data": [{"id": 42, "name": "Via proxy"}]}
+    ctx.http.routes[FBASE + "/cf/categories"] = {"data": []}
+    w.open_page("mods")
+    page = w.page("mods")
+    page.open_browser()
+    page.browser.set_source("curseforge")
+    pump(until=lambda: any(c.title.text() == "Via proxy" for c in page.browser.cards))
+    assert page.browser.source == "curseforge" and page.browser.cards[0].title.text() == "Via proxy"

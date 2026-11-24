@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import hashlib
 import json
 import os
@@ -29,7 +31,7 @@ Progress = Callable[[str, int, int], None]
 
 class UnsafePath(Exception):
     def __init__(self, path: str):
-        super().__init__(f"Небезопасный путь в сборке: {path}")
+        super().__init__(t('Небезопасный путь в сборке: {path}', path=path))
         self.path = path
 
 
@@ -273,7 +275,7 @@ def apply_update(plan: UpdatePlan, pack: MrPack, game_dir: Path, http: Http, cac
             progress(Path(f.path).name, n, total)
     # 2) safety snapshot of the current state
     if (game_dir / "mods").is_dir():
-        snapshots.create(snapshots_root, game_dir, f"Перед обновлением сборки до {idx.version}")
+        snapshots.create(snapshots_root, game_dir, t('Перед обновлением сборки до {version}', version=idx.version))
     # 3) apply
     game_dir.mkdir(parents=True, exist_ok=True)
     for rel in plan.remove:

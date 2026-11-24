@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import base64
 import hashlib
 import json
@@ -134,7 +136,7 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
                                       [f["downloadUrl"]]))
             else:
                 manual.append(ManualFile(rel, digest, mod.get("name", rel), cf.page(mod, f.get("id"))))
-                warnings.append(f"{mod.get('name', rel)}: автор запретил перезалив, игроки скачают вручную")
+                warnings.append(t('{x0}: автор запретил перезалив, игроки скачают вручную', x0=mod.get('name', rel)))
             continue
         v = found.get(digest)
         if v:
@@ -151,7 +153,7 @@ def build(game_dir: Path, modrinth: Modrinth, name: str, version: str, mc_versio
             meta = read_jar(game_dir / rel)
             if meta and not license_allowed(meta.license):
                 manual.append(ManualFile(rel, digest, meta.name, manual_page(meta.name, meta.display_url)))
-                warnings.append(f"{meta.name}: закрытая лицензия, игроки скачают вручную")
+                warnings.append(t('{name}: закрытая лицензия, игроки скачают вручную', name=meta.name))
                 continue
         overrides.append(rel)
     for d in OVERRIDE_DIRS:

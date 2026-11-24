@@ -27,14 +27,20 @@ class LaunchSpec:
     fullscreen: bool
     width: int
     height: int
-    authlib: Path
+    authlib: Path | None
     world: str | None = None
     server: str | None = None
+    fps: bool = False
 
 
 def build_command(spec: LaunchSpec) -> list[str]:
-    jvm = [f"-Xmx{spec.ram_mb}m", f"-Xms{min(spec.ram_mb, 2048)}m", f"-javaagent:{spec.authlib}=ely.by",
+    jvm = [f"-Xmx{spec.ram_mb}m", f"-Xms{min(spec.ram_mb, 2048)}m",
            "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8"]
+    if spec.fps:
+        from netlauncher.fps import JVM
+        jvm.extend(JVM)
+    if spec.authlib is not None:
+        jvm.append(f"-javaagent:{spec.authlib}=ely.by")
     options = {
         "username": spec.account.name, "uuid": spec.account.uuid, "token": spec.account.access_token,
         "executablePath": str(spec.game.java), "jvmArguments": jvm, "launcherName": "NETLauncher",

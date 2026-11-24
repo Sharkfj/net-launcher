@@ -73,7 +73,8 @@ def test_ensure_valid_ok_and_offline(tmp_path):
     acc = Account("Shark", "abc123", "tok", "ct")
     store.save(acc)
     assert ensure_valid(ElyAuth(FakeHttp({f"{AUTH}/validate": None})), store) == acc
-    assert ensure_valid(ElyAuth(FakeHttp(offline=True)), store) == acc
+    assert ensure_valid(ElyAuth(FakeHttp(offline=True)), store) == Account("Shark", "abc123", "0", "", True)
+    assert store.load() == acc
 
 
 def test_ensure_valid_without_account(tmp_path):
@@ -93,3 +94,10 @@ def test_logout_and_head_url():
     ElyAuth(http).logout(Account("Shark", "abc", "tok", "ct"))
     assert http.calls[-1].body == {"accessToken": "tok", "clientToken": "ct"}
     assert head_url(Account("Shark", "abc", "t", "c")) == "https://skinsystem.ely.by/skins/Shark.png"
+
+
+def test_offline_nickname_identity():
+    from netlauncher.auth_ely import offline_account, valid_nick
+    assert offline_account("Steve") == Account("Steve", "5627dd98e6be3c21b8a8e92344183641", "0", "", True)
+    assert valid_nick("A_9")
+    assert all(not valid_nick(n) for n in ["", "ok", " user", "Юзер", "x"*17, "player\n"])

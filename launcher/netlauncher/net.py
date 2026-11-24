@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from netlauncher.i18n import t
+
 import hashlib
 import os
 import time
@@ -25,13 +27,13 @@ class HttpError(Exception):
 
 class Offline(Exception):
     def __init__(self, url: str):
-        super().__init__(f"Нет соединения: {url}")
+        super().__init__(t('Нет соединения: {url}', url=url))
         self.url = url
 
 
 class HashMismatch(Exception):
     def __init__(self, path: Path):
-        super().__init__(f"Файл повреждён при скачивании: {Path(path).name}")
+        super().__init__(t('Файл повреждён при скачивании: {name}', name=Path(path).name))
         self.path = Path(path)
 
 
