@@ -15,7 +15,7 @@ from netlauncher.net import HttpError
 from netlauncher.ui import jobs, supporter, profile_style
 from netlauncher.ui.pages.common import confirm, hbox, human_date, label, vbox
 from netlauncher.ui.pages.home import ELY_SKIN_UPLOAD
-from netlauncher.ui.skinview import SkinRenderer, default_skin, face
+from netlauncher.ui.skinview import SkinRenderer, face
 from netlauncher.ui.widgets import AccentButton, Avatar, CompactCombo, GhostButton, GlassCard
 
 
@@ -136,6 +136,7 @@ class ProfilePage(QWidget):
         self.nickname.setText(name or t("Гость"))
         online_account = bool(acc and not acc.offline)
         self.kind.setText(t("Локальный профиль") if self.own and acc and acc.offline
+                          else t("Аккаунт Microsoft") if self.own and acc and acc.provider == "microsoft"
                           else t("Аккаунт Ely.by") if name else t("Вход в лаунчер"))
         self.avatar.set_name(name)
         self.avatar.set_face(self.window.rail.avatar.face_image() if self.own else None)
@@ -144,7 +145,7 @@ class ProfilePage(QWidget):
         self.developer.setVisible(self.own and online_account and profile_style.is_developer(acc.uuid))
         self.avatar.set_supporter(False)
         self.style_note.clear()
-        self.skin_btn.setVisible(self.own and online_account)
+        self.skin_btn.setVisible(self.own and online_account and acc.provider == "ely")
         selected = localpacks.get(self.ctx.lay, self.ctx.settings.selected_pack) if self.ctx.settings.selected_pack else None
         self.preview.setVisible(bool(self.own and acc and selected))
         self.account_btn.setVisible(self.own)
@@ -182,10 +183,10 @@ class ProfilePage(QWidget):
         if not self.own:
             def got_skin(value):
                 if shiboken6.isValid(self) and request == self.skin_request:
-                    self.skin_model.set_skin(default_skin())
+                    self.skin_model.set_skin(value)
                     self.window.scene.update()
                     self.avatar.set_face(face(self.skin_model.skin_png))
-                    self.skin_status.clear()
+                    self.skin_status.setText("" if value else t("Скин недоступен. Показана стандартная модель."))
             jobs.run(lambda progress: skin.fetch(self.ctx.http, name, self.ctx.lay.cache),
                      on_done=got_skin, on_error=lambda _: got_skin(None))
         self.comments.open(name, self.own, self.avatar)
@@ -202,6 +203,10 @@ class ProfilePage(QWidget):
             elif self.style_note.text() == t("Можно примерить. Для сохранения активируй ключ."):
                 self.style_note.clear()
             self.support.refresh()
+            uuid = supporter._identity(self.ctx)
+            cached = self.ctx.settings.profile_cosmetics.get(uuid, {})
+            if isinstance(cached, dict) and cached.get("pending"):
+                self.sync_cosmetics(uuid, profile_style.clean(cached))
             self.pack_controls.setVisible(bool(self.pack.currentData()))
             self.pack_note.setVisible(not self.pack.currentData())
             for control in (self.pack, self.backdrop, self.pose, self.apply):
@@ -253,7 +258,10 @@ class ProfilePage(QWidget):
         self.edited = False
         self.window.rail.avatar.set_supporter(True, style["frame"])
         self.style_note.setText(t("Сохранено на этом ПК."))
-        if not supporter.online_active(self.ctx) or not self.ctx.friends_url():
+        self.sync_cosmetics(uuid, style)
+
+    def sync_cosmetics(self, uuid, style):
+        if uuid in self.saving or not supporter.online_active(self.ctx) or not self.ctx.friends_url():
             return
         self.saving.add(uuid)
         self.save_appearance.setEnabled(False)
@@ -270,15 +278,14 @@ class ProfilePage(QWidget):
                 if not self.edited:
                     self.style_note.setText(t("Сохранено в профиле.") if ok else
                                             t("Сохранено на этом ПК. Для синхронизации нажми «Сохранить украшения» ещё раз."))
-        owner = self.comments.owner or acc.uuid
-        jobs.run(lambda progress: client.profile(acc.name, "appearance", owner=owner,
+        jobs.run(lambda progress: client.profile(acc.name, "appearance", owner=acc.uuid,
                                                 appearance=style),
                  on_done=lambda _: finished(True), on_error=lambda _: finished(False))
 
     def show_account_skin(self, value, account_id):
         acc = self.ctx.accounts.load()
         if self.own and acc and acc.uuid == account_id:
-            self.skin_model.set_skin(default_skin())
+            self.skin_model.set_skin(value)
             self.window.scene.profile_studio.skin = self.skin_model
             self.window.scene.update()
             self.skin_status.clear()

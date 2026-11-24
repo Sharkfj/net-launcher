@@ -3,20 +3,16 @@
 <h1 align="center">.NET Launcher</h1>
 <p align="center">A Minecraft launcher for official modpacks and packs you build yourself.</p>
 <p align="center">
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher.exe"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases"><strong>Download an installer</strong></a>
   &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher-x86_64.AppImage"><strong>Download Linux AppImage (64-bit)</strong></a>
-  &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher-linux.tar.gz"><strong>Linux archive</strong></a>
-  &nbsp; · &nbsp;
-  <a href="CHANGELOG.md">What's new in 0.3.0 beta</a>
+  <a href="CHANGELOG.md">What's new</a>
 </p>
 
 ![The official .NET pack on the launcher home screen, with its city backdrop and Play button](docs/images/launcher-home.png)
 
 ## Play your first pack
 
-1. Open **NET-Launcher.exe** on Windows. On 64-bit Linux, run `chmod +x NET-Launcher-x86_64.AppImage && ./NET-Launcher-x86_64.AppImage`. The **NET-Launcher-linux.tar.gz** archive is available as an alternative.
+1. On Windows, run **NET-Launcher-Setup.exe**. On x86_64 Linux, run `sh NET-Launcher-Linux-Setup.sh` to install for your user. The AppImage and archive are also available on the release page.
 2. Choose English or Russian. Sign in with [Ely.by](https://account.ely.by/register) for your skin and multiplayer, or choose **Play without signing in** for single-player.
 3. Open **Official**, select **.NET** and click **Install**. The launcher sets up Minecraft, Java and NeoForge. If a mod requires a manual download, follow the link and drop the file into the launcher.
 4. Click **Play**. When an official pack update is available, the button changes to **Update**. The launcher backs up your worlds before applying it.
@@ -44,6 +40,15 @@ Open a pack to browse mods, resource packs and shaders. **Snapshots** lets you r
 ![Animated startup sequence with the .NET Launcher logo](docs/images/launcher-startup.gif)
 
 </details>
+
+## Microsoft sign-in configuration
+
+1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), open **App registrations → New registration**. Name the app **.NET Launcher** and select an account type that includes personal Microsoft accounts.
+2. In the app's **Authentication** settings, turn **Allow public client flows** on. Copy the **Application (client) ID** from **Overview**. Device code sign-in uses this public ID and requires no client secret.
+3. Request access to the [Minecraft Java Edition game service API](https://help.minecraft.net/hc/es-es/articles/16254801392141-New-Java-Edition-Game-Service-API-Review-or-Application-Process) for that app ID.
+4. After approval, add the ID under **Settings → Secrets and variables → Actions → Variables** in the GitHub repository as `NET_MICROSOFT_CLIENT_ID`. Build the launcher again. For a run from source, set the environment variable of the same name before launching.
+
+Microsoft accounts can launch Minecraft: Java Edition and load their skin. The launcher friends service uses Ely.by accounts.
 
 ## Run from source
 

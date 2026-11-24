@@ -1,4 +1,4 @@
-# .NET Launcher 0.3.0 beta 4
+# .NET Launcher 0.3.2 beta 1
 
 ## Packs and worlds
 
@@ -9,12 +9,14 @@
 
 ## Profiles and friends
 
-- Open your profile from the player head in the sidebar. A plain gray, featureless model stands beside your account controls and appears on other player profiles too.
+- Open your profile from the player head in the sidebar. Account skins appear in the launcher when available. A plain gray model is shown if no skin loads.
 - Preview nickname fonts, colours, shimmer and pulse effects, and avatar frames. A supporter key unlocks saving cosmetics, including for players with no personal packs. The developer account has a hammer badge.
 - Choose who may comment on your profile. Profile owners can remove any comment, and authors can remove their own.
 - Open direct and group chats inside **Friends** to share screenshots and pack invitations. Chat, online comments and cosmetic sync need a compatible friends service.
 
 ## Desktop integration
+
+- The Windows installer adds Start menu and desktop shortcuts. The x86_64 Linux installer adds a launcher to the application menu and installs under the current user's account.
 
 - Linux downloads include an x86_64 AppImage for common desktop distributions, alongside the standalone archive. The AppImage requires a compatible glibc; it cannot cover every Linux system or CPU architecture.
 - Discord Rich Presence can show the launcher logo, the active pack and time played. The application ID is built in. Use **Settings → Discord activity** to switch it off.

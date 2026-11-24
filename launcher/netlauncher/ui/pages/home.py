@@ -103,8 +103,10 @@ class LoginPanel(QWidget):
         self.ms_button = GhostButton(t('Войти через Microsoft'))
         from netlauncher.auth_ms import MS_CLIENT_ID
         self.ms_button.setEnabled(bool(MS_CLIENT_ID))
+        self.ms_button.clicked.connect(self._start_microsoft)
+        self.ms_attempt = 0
         ms_row.addWidget(self.ms_button, 1)
-        self.ms_note = label(t('В разработке'), 9.5, role="faint")
+        self.ms_note = label(t('Вход ещё недоступен'), 9.5, role="faint")
         self.ms_note.setVisible(not MS_CLIENT_ID)
         ms_row.addWidget(self.ms_note)
         lay.addLayout(ms_row)
@@ -112,6 +114,64 @@ class LoginPanel(QWidget):
         row.addStretch(1)
         outer.addLayout(row)
         outer.addStretch(2)
+
+    def _start_microsoft(self):
+        from netlauncher import auth_ms
+
+        self.ms_attempt += 1
+        attempt = self.ms_attempt
+        self.ms_button.setEnabled(False)
+        self.error.clear()
+
+        def failed(error):
+            if attempt != self.ms_attempt:
+                return
+            self.ms_button.setEnabled(True)
+            if isinstance(error, auth_ms.NoGame):
+                message = t('На этом аккаунте нет Minecraft: Java Edition.')
+            elif isinstance(error, auth_ms.AppNotApproved):
+                message = t('Microsoft пока не разрешил вход для этого лаунчера.')
+            else:
+                message = t('Не удалось войти через Microsoft. Попробуй ещё раз.')
+            self.error.setText(message)
+
+        def started(code):
+            if attempt != self.ms_attempt:
+                return
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(code.user_code)
+            self.error.setText(t('Код Microsoft: {code}. Он скопирован. Введи его в браузере.', code=code.user_code))
+            url = QUrl(code.verification_uri)
+            if url.scheme() == "https" and url.host() in {"microsoft.com", "www.microsoft.com", "login.microsoftonline.com"}:
+                QDesktopServices.openUrl(url)
+            expires = time.monotonic() + code.expires_in
+
+            def poll():
+                if attempt != self.ms_attempt:
+                    return
+                if time.monotonic() >= expires:
+                    failed(auth_ms.MsLoginFailed("expired"))
+                    return
+
+                def complete(account):
+                    if attempt != self.ms_attempt:
+                        return
+                    if account is None:
+                        QTimer.singleShot(max(1, code.interval) * 1000, self, poll)
+                    else:
+                        self.error.clear()
+                        self._done(account)
+
+                def check(progress):
+                    tokens = auth_ms.poll_credentials(self.ctx.http, auth_ms.MS_CLIENT_ID, code)
+                    return auth_ms.account_from_credentials(self.ctx.http, tokens) if tokens else None
+
+                jobs.run(check, on_done=complete, on_error=failed)
+
+            QTimer.singleShot(max(1, code.interval) * 1000, self, poll)
+
+        jobs.run(lambda progress: auth_ms.start_device_login(self.ctx.http, auth_ms.MS_CLIENT_ID),
+                 on_done=started, on_error=failed)
 
     def _guest(self) -> None:
         name, ok = QInputDialog.getText(self, t('Играть без входа'), t('Ник для одиночной игры'))
@@ -140,6 +200,10 @@ class LoginPanel(QWidget):
                  on_done=self._done, on_error=self._failed)
 
     def _done(self, acc: Account) -> None:
+        from netlauncher.auth_ms import MS_CLIENT_ID
+
+        self.ms_attempt += 1
+        self.ms_button.setEnabled(bool(MS_CLIENT_ID))
         self._reset_button()
         self.ctx.accounts.save(acc)
         self.password.clear()
@@ -912,14 +976,20 @@ class HomePage(QWidget):
         if self.skin_account != identity:
             self.account_skin = None
             self.skin_account = identity
-        if acc is None:
+        if acc is None or acc.offline:
             return
         def loaded(value):
             current = self.ctx.accounts.load()
             if request == self._skin_request and current and current.uuid == identity:
                 self._skin_loaded(value)
-        jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache),
+        jobs.run(lambda progress: self._fetch_account_skin(acc),
                  on_done=loaded, on_error=lambda e: None)
+
+    def _fetch_account_skin(self, acc, force=False):
+        if acc.provider == "microsoft":
+            from netlauncher.auth_ms import fetch_skin
+            return fetch_skin(self.ctx.http, acc, self.ctx.lay.cache, force)
+        return skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache, force)
 
     # ---------- skin change ----------
     def pick_skin(self) -> None:
@@ -947,6 +1017,7 @@ class HomePage(QWidget):
     def cancel_skin_preview(self) -> None:
         self._preview_png = None
         self.panel.skin_bar.hide()
+        self._scene_skin(self.account_skin)
         self._load_skin(self.ctx.accounts.load())
 
     def reload_skin(self) -> None:
@@ -959,14 +1030,14 @@ class HomePage(QWidget):
         def current():
             account = self.ctx.accounts.load()
             return request == self._skin_request and account and account.uuid == acc.uuid
-        jobs.run(lambda progress: skin.fetch(self.ctx.http, acc.name, self.ctx.lay.cache, force=True),
+        jobs.run(lambda progress: self._fetch_account_skin(acc, force=True),
                  on_done=lambda value: self._skin_reloaded(value) if current() else None,
                  on_error=lambda e: self.panel.skin_hint.setText(_error_text(e)) if current() else None)
 
     def _skin_reloaded(self, sk) -> None:
         self._preview_png = None
         if sk is None:
-            self.panel.skin_hint.setText(t('На Ely.by у аккаунта нет скина.'))
+            self.panel.skin_hint.setText(t('Не удалось загрузить скин аккаунта.'))
             return
         self.panel.skin_bar.hide()
         self._skin_loaded(sk)
@@ -975,10 +1046,11 @@ class HomePage(QWidget):
         self.account_skin = sk
         page = getattr(self.window, "_pages", {}).get("profile")
         if page and hasattr(page, "show_account_skin"):
-            page.show_account_skin(default_skin(), self.skin_account)
-        self._scene_skin(default_skin())
+            page.show_account_skin(sk, self.skin_account)
+        if self._preview_png is None:
+            self._scene_skin(sk)
         if self.window is not None and hasattr(self.window, "set_face"):
-            self.window.set_face(face(default_skin().png))
+            self.window.set_face(face((sk or default_skin()).png))
 
     def _scene_skin(self, sk) -> None:
         if self.window is not None and hasattr(self.window, "skin"):
@@ -1166,7 +1238,7 @@ class HomePage(QWidget):
                                              lambda s, c, m: progress(f"Minecraft: {s}", c, m))
             if acc.offline and server:
                 raise ValueError(t('Для игры на сервере нужен вход через Ely.by и интернет.'))
-            authlib = None if acc.offline else self.ctx.installer.ensure_authlib()
+            authlib = self.ctx.installer.ensure_authlib() if not acc.offline and acc.provider == "ely" else None
             return acc, game, authlib
 
         jobs.run(prepare, on_done=lambda r: self._launch(lp, r, world, server), on_error=self._prepare_failed,
@@ -1176,7 +1248,8 @@ class HomePage(QWidget):
         self._set_playing(False)
         self.panel.bar.set_fraction(0)
         if isinstance(e, NeedLogin):
-            self.login.set_message(t('Сессия Ely.by истекла. Войди ещё раз.'))
+            self.login.set_message(t('Сессия Microsoft истекла. Войди ещё раз.') if e.args == ("microsoft",)
+                                   else t('Сессия Ely.by истекла. Войди ещё раз.'))
             self.refresh()
             return
         self.panel.status.setText(_error_text(e))
@@ -1196,7 +1269,7 @@ class HomePage(QWidget):
             self.proc = self.process_factory(gd)
             self._started_at = time.time()
             self._session_log = coop.SessionLog(self.proc.log_path)
-            self._hosting = lp if not server and not getattr(acc, "offline", False) and (gd / coop.OPT_IN).is_file() else None
+            self._hosting = lp if not server and not acc.offline and acc.provider == "ely" and (gd / coop.OPT_IN).is_file() else None
             self._announced = set()
             self.proc.start(cmd, gd)
             if self.window is not None and hasattr(self.window, "set_game_running"):

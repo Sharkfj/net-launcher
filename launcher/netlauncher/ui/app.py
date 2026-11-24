@@ -64,8 +64,14 @@ def _already_running() -> bool:
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Sharkfj.NETLauncher")
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
+    from netlauncher.ui.icons import app_icon
+
+    app.setWindowIcon(app_icon())
     app.setApplicationName("NET Launcher")
     app.setApplicationVersion(__version__)
     app.setDesktopFileName("net-launcher")

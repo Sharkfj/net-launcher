@@ -199,10 +199,10 @@ class FriendsPage(QWidget):
     def _update_notice(self) -> bool:
         configured = bool(self.ctx.friends_url())
         acc = self.ctx.accounts.load()
-        self.add_row.setVisible(bool(configured and acc and not getattr(acc,"offline",False)))
+        self.add_row.setVisible(bool(configured and acc and not acc.offline and acc.provider == "ely"))
         if not configured:
             self.notice.setText(t('Сервер друзей не подключён. Его адрес задаёт автор сборки в каталоге; если тебе дали адрес, впиши его в настройках, раздел «Лаунчер».'))
-        elif getattr(acc,"offline",False):
+        elif acc and (acc.offline or acc.provider != "ely"):
             self.notice.setText(t("Друзья работают после входа через Ely.by."))
             return False
         elif acc is None:

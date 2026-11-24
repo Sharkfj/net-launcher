@@ -6,7 +6,6 @@ from netlauncher.auth_ely import offline_account
 from netlauncher.ui import anim
 from netlauncher.ui.app import make_context
 from netlauncher.ui.pages import FACTORY
-from netlauncher.ui.skinview import default_skin
 from netlauncher.ui.window import MainWindow
 from tests.fakes import FakeHttp
 
@@ -100,20 +99,20 @@ def test_guest_profile_skin_independent_of_comments_and_client_version(home, mon
         assert not page.comments.form.isVisible()
         second(skin.Skin(default_skin().png, True))
         first(skin.Skin(default_skin().png, False))
-        assert page.skin_model.skin_png == default_skin().png and not page.skin_model.slim
+        assert page.skin_model.slim
         assert page.avatar.has_face()
         assert not page.skin_status.text()
         win.open_profile("PlayerC")
         delivered[-1](None)
-        assert not page.skin_model.slim and not page.skin_status.text()
+        assert not page.skin_model.slim and page.skin_status.text()
         home_page = win.page("home")
         home_page._skin_loaded(skin.Skin(default_skin().png, True))
         win.open_profile()
-        assert page.skin_column.isVisible() and not page.skin_model.slim
+        assert page.skin_column.isVisible() and page.skin_model.slim
         assert win.scene.scene() is win.scene.profile_studio
         late_guest = delivered[-1]
         late_guest(None)
-        assert not page.skin_model.slim
+        assert page.skin_model.slim
         win.open_page("home")
         assert win.scene.scene() is not win.scene.profile_studio
     finally:

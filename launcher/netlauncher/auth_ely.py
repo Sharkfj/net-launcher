@@ -23,6 +23,8 @@ class Account:
     access_token: str
     client_token: str
     offline: bool = False
+    provider: str = "ely"
+    refresh_token: str = ""
 
 
 def valid_nick(name: str) -> bool:
@@ -100,7 +102,7 @@ class ElyAuth:
         return True
 
     def logout(self, acc: Account) -> None:
-        if acc.offline:
+        if acc.offline or acc.provider != "ely":
             return
         try:
             self._post("invalidate", {"accessToken": acc.access_token, "clientToken": acc.client_token})
@@ -141,6 +143,24 @@ def ensure_valid(auth: ElyAuth, store: AccountStore, *, disconnected: bool = Fal
     local = replace(acc, access_token="0", client_token="", offline=True)
     if disconnected:
         return local
+    if acc.provider == "microsoft":
+        from netlauncher.auth_ms import MsLoginFailed, refresh_account
+        try:
+            fresh = refresh_account(auth.http, acc)
+        except Offline:
+            return local
+        except HttpError as e:
+            if e.status >= 500:
+                return local
+            if store.load() == acc:
+                store.clear()
+            raise NeedLogin("microsoft") from e
+        except MsLoginFailed as e:
+            if store.load() == acc:
+                store.clear()
+            raise NeedLogin("microsoft") from e
+        store.save(fresh)
+        return fresh
     try:
         if auth.validate(acc):
             return acc

@@ -27,10 +27,33 @@ jobs:
       - run: pytest -q
         env:
           QT_QPA_PLATFORM: offscreen
+      - name: Configure Microsoft client ID
+        env:
+          MICROSOFT_CLIENT_ID: ${{ vars.NET_MICROSOFT_CLIENT_ID }}
+        run: python -c "import os; from pathlib import Path; Path('netlauncher/_build_config.py').write_text('MICROSOFT_CLIENT_ID = ' + repr(os.environ['MICROSOFT_CLIENT_ID']) + chr(10), encoding='utf-8')"
       - run: pyinstaller packaging/net-launcher.spec --noconfirm
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          } else {
+            $compiler = $iscc.Source
+          }
+          $version = python -c "import netlauncher; print(netlauncher.__version__)"
+          & $compiler "/DLauncherVersion=$version" packaging/windows.iss
+          exit $LASTEXITCODE
       - name: Archive (Linux)
         if: runner.os == 'Linux'
-        run: tar -C dist -czf NET-Launcher-linux.tar.gz net-launcher
+        run: |
+          install -m 644 packaging/icon.png dist/net-launcher/launcher-icon.png
+          tar -C dist -czf NET-Launcher-linux.tar.gz net-launcher
+          cat packaging/linux-installer.sh NET-Launcher-linux.tar.gz > NET-Launcher-Linux-Setup.sh
+          chmod +x NET-Launcher-Linux-Setup.sh
       - name: Build Linux AppImage
         if: runner.os == 'Linux'
         shell: bash
@@ -62,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: launcher-Windows
-          path: launcher/dist/NET-Launcher.exe
+          path: launcher/dist/NET-Launcher-Setup.exe
           if-no-files-found: error
       - name: Keep Linux downloads
         if: runner.os == 'Linux'
@@ -71,6 +94,7 @@ jobs:
           name: launcher-Linux
           path: |
             launcher/NET-Launcher-linux.tar.gz
+            launcher/NET-Launcher-Linux-Setup.sh
             launcher/NET-Launcher-x86_64.AppImage
           if-no-files-found: error
   release:
@@ -95,6 +119,7 @@ jobs:
           make_latest: false
           fail_on_unmatched_files: true
           files: |
-            downloads/NET-Launcher.exe
+            downloads/NET-Launcher-Setup.exe
+            downloads/NET-Launcher-Linux-Setup.sh
             downloads/NET-Launcher-x86_64.AppImage
             downloads/NET-Launcher-linux.tar.gz

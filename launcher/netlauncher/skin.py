@@ -39,6 +39,19 @@ def check_skin(data: bytes) -> tuple[int, int]:
 def fetch(http: Http, name: str, cache_dir: Path, force: bool = False) -> Skin | None:
     if not re.fullmatch(r"[A-Za-z0-9_]{2,16}", name):
         return None
+    def texture():
+        info = http.get_json(TEXTURES.format(name=name)) or {}
+        sk = info.get("SKIN") if isinstance(info, dict) else None
+        if sk and sk.get("url"):
+            return sk["url"], (sk.get("metadata") or {}).get("model") == "slim"
+        return None
+
+    return fetch_texture(http, name, cache_dir, force, texture)
+
+
+def fetch_texture(http, name, cache_dir, force, texture):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{2,64}", name):
+        return None
     d = Path(cache_dir) / "skins"
     png, meta = d / f"{name}.png", d / f"{name}.json"
 
@@ -58,14 +71,13 @@ def fetch(http: Http, name: str, cache_dir: Path, force: bool = False) -> Skin |
     except (OSError, ValueError):
         pass
     try:
-        info = http.get_json(TEXTURES.format(name=name)) or {}
-        sk = info.get("SKIN") if isinstance(info, dict) else None
+        resource = texture()
         d.mkdir(parents=True, exist_ok=True)
-        if not sk or not sk.get("url"):
+        if not resource:
             meta.write_text(json.dumps({"fetched": time.time(), "none": True}), encoding="utf-8")
             return None
-        http.download(sk["url"], png)
-        slim = (sk.get("metadata") or {}).get("model") == "slim"
+        url, slim = resource
+        http.download(url, png)
         meta.write_text(json.dumps({"fetched": time.time(), "slim": slim}), encoding="utf-8")
         return Skin(png.read_bytes(), slim)
     except (Offline, HttpError, OSError, ValueError):

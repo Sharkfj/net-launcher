@@ -24,7 +24,7 @@ class FriendsClient:
         self.http, self.base = http, base_url.rstrip("/")
         self.session_path, self.account = Path(session_path), account
         acc = self.account()
-        self.identity = acc.uuid if acc and not getattr(acc, "offline", False) else ""
+        self.identity = acc.uuid if acc and not acc.offline and acc.provider == "ely" else ""
         self._session_lock = threading.RLock()
         self.token = self._load()
 
@@ -48,7 +48,7 @@ class FriendsClient:
 
     def _active_account(self):
         acc = self.account()
-        if not self.base or not self.identity or not acc or getattr(acc, "offline", False) or acc.uuid != self.identity:
+        if not self.base or not self.identity or not acc or getattr(acc, "offline", False) or acc.provider != "ely" or acc.uuid != self.identity:
             raise NotConfigured()
         return acc
 

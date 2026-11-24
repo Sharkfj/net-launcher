@@ -551,4 +551,12 @@ EN = {
     "В карточке сборки неверные данные.": "The pack card contains invalid data.",
     "Настройки сборки слишком велики для чата.": "These pack settings are too large to share in chat.",
     "Непрочитанных сообщений: {n}": "Unread messages: {n}",
+    'Вход ещё недоступен': 'Sign-in unavailable',
+    'На этом аккаунте нет Minecraft: Java Edition.': 'This account does not own Minecraft: Java Edition.',
+    'Microsoft пока не разрешил вход для этого лаунчера.': 'Microsoft sign-in has not been approved for this launcher.',
+    'Не удалось войти через Microsoft. Попробуй ещё раз.': 'Microsoft sign-in failed. Try again.',
+    'Код Microsoft: {code}. Он скопирован. Введи его в браузере.': 'Microsoft code: {code}. It was copied to the clipboard. Enter it in your browser.',
+    'Аккаунт Microsoft': 'Microsoft account',
+    "Не удалось загрузить скин аккаунта.": "Could not load the account skin.",
+    "Сессия Microsoft истекла. Войди ещё раз.": "Your Microsoft session expired. Sign in again.",
 }

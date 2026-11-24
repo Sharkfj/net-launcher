@@ -23,7 +23,7 @@ def display_name(name, supporter):
 
 def _identity(ctx):
     account = ctx.accounts.load()
-    if account and not getattr(account, "offline", False):
+    if account and not account.offline and account.provider == "ely":
         return account.uuid.replace("-", "").lower()
     return ""
 
@@ -171,7 +171,7 @@ class RedeemCard(GlassCard):
             self.status.setText(t("В ключе должно быть 16 символов."))
             return
         digest = author_digest(self.ctx)
-        if digest and not active(self.ctx) and hmac.compare_digest(hashlib.sha256(key.encode()).hexdigest(), digest):
+        if digest and not _connected(self.ctx, self.window) and not active(self.ctx) and hmac.compare_digest(hashlib.sha256(key.encode()).hexdigest(), digest):
             self.ctx.settings.author_cosmetic_receipt = digest
             self.ctx.save()
             self.entry.clear()

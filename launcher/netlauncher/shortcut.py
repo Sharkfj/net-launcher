@@ -21,6 +21,17 @@ def desktop_dir() -> Path:
     if override:
         return Path(override)
     if _windows():
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+                 "[Environment]::GetFolderPath('DesktopDirectory')"],
+                capture_output=True, text=True, encoding="utf-8", check=True, timeout=5,
+            ).stdout.strip()
+            if out:
+                return Path(out)
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            pass
         return Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
     try:
         out = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True, timeout=5).stdout.strip()
@@ -60,7 +71,7 @@ def create(command: list[str], icon: Path, name: str = NAME) -> Path:
     if _windows():
         lnk = d / f"{name}.lnk"
         script = (f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut({_ps(str(lnk))}); "
-                  f"$s.TargetPath = {_ps(command[0])}; $s.Arguments = {_ps(' '.join(command[1:]))}; "
+                  f"$s.TargetPath = {_ps(command[0])}; $s.Arguments = {_ps(subprocess.list2cmdline(command[1:]))}; "
                   f"$s.IconLocation = {_ps(str(icon) + ',0')}; $s.Save()")
         subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True, timeout=30,
                        capture_output=True)
