@@ -36,7 +36,8 @@ def test_linux_desktop_file(tmp_path, monkeypatch):
     text = f.read_text(encoding="utf-8")
     assert f == tmp_path / "Desktop" / "net-launcher.desktop"
     assert "Exec=/x/net-launcher" in text and "Icon=/x/icon.png" in text and "Name=.NET Launcher" in text
-    assert f.stat().st_mode & stat.S_IXUSR
+    if os.name != "nt":
+        assert f.stat().st_mode & stat.S_IXUSR
     assert ran.calls and ran.calls[0][:2] == ["gio", "set"]
 
 

@@ -1,4 +1,4 @@
-# .NET Launcher 0.3.0 beta 3
+# .NET Launcher 0.3.0 beta 4
 
 ## Packs and worlds
 

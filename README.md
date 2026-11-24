@@ -3,11 +3,11 @@
 <h1 align="center">.NET Launcher</h1>
 <p align="center">A Minecraft launcher for official modpacks and packs you build yourself.</p>
 <p align="center">
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher.exe"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher.exe"><strong>Download for Windows</strong></a>
   &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher-x86_64.AppImage"><strong>Download Linux AppImage (64-bit)</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher-x86_64.AppImage"><strong>Download Linux AppImage (64-bit)</strong></a>
   &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.3/NET-Launcher-linux.tar.gz"><strong>Linux archive</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.4/NET-Launcher-linux.tar.gz"><strong>Linux archive</strong></a>
   &nbsp; · &nbsp;
   <a href="CHANGELOG.md">What's new in 0.3.0 beta</a>
 </p>
