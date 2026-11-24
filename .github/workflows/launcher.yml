@@ -55,7 +55,8 @@ jobs:
         with:
           name: .NET Launcher ${{ steps.version.outputs.number }}
           body_path: CHANGELOG.md
-          make_latest: true
+          prerelease: true
+          make_latest: false
           fail_on_unmatched_files: true
           files: |
             downloads/NET-Launcher.exe
