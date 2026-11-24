@@ -25,30 +25,14 @@ def _png(img: QImage) -> bytes:
 
 
 def default_skin() -> Skin:
-    """Our own neutral default skin (not Mojang's): blue jacket, dark trousers."""
+    """A plain gray mannequin used when the launcher has no visible skin."""
     img = QImage(64, 64, QImage.Format.Format_ARGB32)
     img.fill(QColor(0, 0, 0, 0))
     p = QPainter(img)
-    colors = {"head": QColor("#D9A47E"), "body": QColor("#2E62B8"), "arm_r": QColor("#2E62B8"),
-              "arm_l": QColor("#2E62B8"), "leg_r": QColor("#1B2235"), "leg_l": QColor("#1B2235")}
+    gray = QColor("#858B96")
     for name, box in parts(64, 64, slim=False).items():
-        for face_name, _c, (u, v, w, h), _n in faces(box):
-            p.fillRect(u, v, w, h, colors[name])
-    p.fillRect(8, 0, 8, 8, QColor("#3A2A22"))      # hair on top
-    p.fillRect(8, 8, 8, 2, QColor("#3A2A22"))      # fringe
-    for x in (0, 16, 24):
-        p.fillRect(x, 8, 8, 3, QColor("#3A2A22"))  # hair on sides/back
-    p.fillRect(24, 8, 8, 8, QColor("#3A2A22"))
-    p.fillRect(9, 12, 2, 1, QColor("#F4F7FC"))
-    p.fillRect(13, 12, 2, 1, QColor("#F4F7FC"))
-    p.fillRect(10, 12, 1, 1, QColor("#1D3F7A"))
-    p.fillRect(13, 12, 1, 1, QColor("#1D3F7A"))
-    p.fillRect(11, 14, 2, 1, QColor("#9C6B52"))
-    p.fillRect(20, 20, 8, 1, QColor("#4C9AFF"))    # collar line in the launcher accent
-    for u, v in ((44, 20), (36, 52)):
-        p.fillRect(u, v + 10, 4, 2, QColor("#D9A47E"))  # hands
-    for u, v in ((4, 20), (20, 52)):
-        p.fillRect(u, v + 10, 4, 2, QColor("#5E6B82"))  # shoes
+        for _face_name, _c, (u, v, w, h), _n in faces(box):
+            p.fillRect(u, v, w, h, gray)
     p.end()
     return Skin(_png(img), False)
 

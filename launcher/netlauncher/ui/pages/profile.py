@@ -15,7 +15,7 @@ from netlauncher.net import HttpError
 from netlauncher.ui import jobs, supporter, profile_style
 from netlauncher.ui.pages.common import confirm, hbox, human_date, label, vbox
 from netlauncher.ui.pages.home import ELY_SKIN_UPLOAD
-from netlauncher.ui.skinview import SkinRenderer, face
+from netlauncher.ui.skinview import SkinRenderer, default_skin, face
 from netlauncher.ui.widgets import AccentButton, Avatar, CompactCombo, GhostButton, GlassCard
 
 
@@ -182,10 +182,10 @@ class ProfilePage(QWidget):
         if not self.own:
             def got_skin(value):
                 if shiboken6.isValid(self) and request == self.skin_request:
-                    self.skin_model.set_skin(value)
+                    self.skin_model.set_skin(default_skin())
                     self.window.scene.update()
                     self.avatar.set_face(face(self.skin_model.skin_png))
-                    self.skin_status.setText("" if value else t("Скин недоступен. Показана стандартная модель."))
+                    self.skin_status.clear()
             jobs.run(lambda progress: skin.fetch(self.ctx.http, name, self.ctx.lay.cache),
                      on_done=got_skin, on_error=lambda _: got_skin(None))
         self.comments.open(name, self.own, self.avatar)
@@ -278,7 +278,7 @@ class ProfilePage(QWidget):
     def show_account_skin(self, value, account_id):
         acc = self.ctx.accounts.load()
         if self.own and acc and acc.uuid == account_id:
-            self.skin_model.set_skin(value)
+            self.skin_model.set_skin(default_skin())
             self.window.scene.profile_studio.skin = self.skin_model
             self.window.scene.update()
             self.skin_status.clear()

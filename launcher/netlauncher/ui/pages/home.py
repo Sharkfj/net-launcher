@@ -31,7 +31,7 @@ from netlauncher.settings import recommended_ram_mb
 from netlauncher.ui import anim, jobs
 from netlauncher.ui.pages import common
 from netlauncher.ui.pages.common import hbox, label, plural, vbox
-from netlauncher.ui.skinview import face
+from netlauncher.ui.skinview import default_skin, face
 from netlauncher.ui.theme import DISPLAY as DISPLAY_FAMILY, font, qcolor
 from netlauncher.ui.widgets import AccentButton, GhostButton, GlassCard, SmoothBar, Toggle
 
@@ -975,17 +975,14 @@ class HomePage(QWidget):
         self.account_skin = sk
         page = getattr(self.window, "_pages", {}).get("profile")
         if page and hasattr(page, "show_account_skin"):
-            page.show_account_skin(sk, self.skin_account)
-        if sk is None:
-            return
-        if self._preview_png is None:
-            self._scene_skin(sk)
+            page.show_account_skin(default_skin(), self.skin_account)
+        self._scene_skin(default_skin())
         if self.window is not None and hasattr(self.window, "set_face"):
-            self.window.set_face(face(sk.png))
+            self.window.set_face(face(default_skin().png))
 
     def _scene_skin(self, sk) -> None:
         if self.window is not None and hasattr(self.window, "skin"):
-            self.window.skin.set_skin(sk)
+            self.window.skin.set_skin(default_skin())
 
     def _load_catalog(self) -> None:
         self.startup_done = False
