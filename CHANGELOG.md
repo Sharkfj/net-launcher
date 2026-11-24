@@ -1,4 +1,4 @@
-# .NET Launcher 0.3.0
+# .NET Launcher 0.3.0 beta 2
 
 ## Packs and worlds
 
@@ -9,7 +9,7 @@
 
 ## Profiles and friends
 
-- Open your profile from the player head in the sidebar. Your character stands beside your account controls. Opening someone else's profile shows their Ely.by skin in the same place.
+- Open your profile from the player head in the sidebar. A plain gray, featureless model stands beside your account controls and appears on other player profiles too.
 - Preview nickname fonts, colours, shimmer and pulse effects, and avatar frames. A supporter key unlocks saving cosmetics, including for players with no personal packs. The developer account has a hammer badge.
 - Choose who may comment on your profile. Profile owners can remove any comment, and authors can remove their own.
 - Open direct and group chats inside **Friends** to share screenshots and pack invitations. Chat, online comments and cosmetic sync need a compatible friends service.

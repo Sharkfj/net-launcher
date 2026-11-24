@@ -3,11 +3,11 @@
 <h1 align="center">.NET Launcher</h1>
 <p align="center">A Minecraft launcher for official modpacks and packs you build yourself.</p>
 <p align="center">
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0/NET-Launcher.exe"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.2/NET-Launcher.exe"><strong>Download for Windows</strong></a>
   &nbsp; · &nbsp;
-  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0/NET-Launcher-linux.tar.gz"><strong>Download for Linux</strong></a>
+  <a href="https://github.com/Sharkfj/net-launcher/releases/download/launcher-v0.3.0-beta.2/NET-Launcher-linux.tar.gz"><strong>Download for Linux</strong></a>
   &nbsp; · &nbsp;
-  <a href="CHANGELOG.md">What's new in 0.3.0</a>
+  <a href="CHANGELOG.md">What's new in 0.3.0 beta</a>
 </p>
 
 ![The official .NET pack on the launcher home screen, with its city backdrop and Play button](docs/images/launcher-home.png)
@@ -25,14 +25,14 @@ The official **.NET** pack runs on Minecraft 1.21.1 with NeoForge. Its cyberpunk
 
 | Personal packs | Player profiles |
 | :--- | :--- |
-| [![Creating a personal pack with FPS mode enabled](docs/images/fps-en.png)](docs/images/fps-en.png) | [![A player's character standing beside their nickname and avatar cosmetics](docs/images/profile-en.png)](docs/images/profile-en.png) |
-| Choose vanilla, Fabric, Forge, NeoForge or Quilt. **FPS mode** sets a 10-chunk render distance and installs compatible performance mods. | Click the head at the bottom of the sidebar to see your character. A supporter key lets you choose a name font, colour and animation, plus an avatar frame. |
+| [![Creating a personal pack with FPS mode enabled](docs/images/fps-en.png)](docs/images/fps-en.png) | [![A gray player model beside profile controls and avatar cosmetics](docs/images/profile-en.png)](docs/images/profile-en.png) |
+| Choose vanilla, Fabric, Forge, NeoForge or Quilt. **FPS mode** sets a 10-chunk render distance and installs compatible performance mods. | Click the head at the bottom of the sidebar to open your profile with a plain gray player model. A supporter key lets you choose a name font, colour and animation, plus an avatar frame. |
 
 Open a pack to browse mods, resource packs and shaders. **Snapshots** lets you roll back a pack change. **Worlds** keeps up to five backups per world, and **Screenshots** opens the pictures you took in-game.
 
 ## Play with friends
 
-- Add a friend by Ely.by nickname. Open their profile to see their skin beside the comments. Profile owners choose who can post and can remove comments.
+- Add a friend by Ely.by nickname. Their profile shows the same plain gray player model. Profile owners choose who can post and can remove comments.
 - Direct and group chats support screenshots and pack invitations. Online chat, comments, cosmetic sync and key redemption require a compatible [friends service](server/README.md).
 - With the Discord desktop app running, **Discord activity** shows when you are in the launcher and which pack you are playing. You can turn it off in Settings.
 

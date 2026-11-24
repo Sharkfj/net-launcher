@@ -982,7 +982,7 @@ class HomePage(QWidget):
 
     def _scene_skin(self, sk) -> None:
         if self.window is not None and hasattr(self.window, "skin"):
-            self.window.skin.set_skin(default_skin())
+            self.window.skin.set_skin(sk)
 
     def _load_catalog(self) -> None:
         self.startup_done = False

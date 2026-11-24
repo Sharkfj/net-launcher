@@ -229,6 +229,7 @@ def test_empty_state_offers_catalog_and_import(make, monkeypatch, tmp_path):
 
 def test_home_loads_skin_into_model_and_avatar(make):
     from netlauncher import skin
+    from netlauncher.ui.skinview import default_skin
     from tests.test_skin import _two_tone_png
     png = _two_tone_png()
     http = FakeHttp({f"{AUTH}/validate": None,
@@ -236,8 +237,9 @@ def test_home_loads_skin_into_model_and_avatar(make):
                                                                    "metadata": {"model": "slim"}}}},
                     downloads={"http://ely.by/s.png": png})
     w, page, ctx = make(http=http)
-    pump(until=lambda: w.skin.skin_png == png)
-    assert w.skin.skin_png == png and w.skin.slim
+    pump(until=lambda: page.account_skin is not None)
+    assert page.account_skin.png == png
+    assert w.skin.skin_png == default_skin().png and not w.skin.slim
     assert w.rail.avatar.has_face()
 
 
